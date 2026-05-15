@@ -142,11 +142,15 @@ actor SFTPSession: SFTPSessionProtocol {
                 for component in nameResponse.components {
                     guard component.filename != ".", component.filename != ".." else { continue }
 
-                    let fullPath = actualPath.hasSuffix("/")
+                    let isDirectory = Self.isDirectoryFromPermissions(component.attributes.permissions)
+                    var fullPath = actualPath.hasSuffix("/")
                         ? "\(actualPath)\(component.filename)"
                         : "\(actualPath)/\(component.filename)"
+                    
+                    if isDirectory && !fullPath.hasSuffix("/") {
+                        fullPath += "/"
+                    }
 
-                    let isDirectory = Self.isDirectoryFromPermissions(component.attributes.permissions)
                     let size = Int64(component.attributes.size ?? 0)
                     let permissions = Self.formatPermissions(component.attributes)
                     let modDate = component.attributes.accessModificationTime?.modificationTime

@@ -142,17 +142,19 @@ final class FileBrowserViewModel {
 
     var pathComponents: [PathComponent] {
         var components: [PathComponent] = []
-        var path = ""
+        var currentAccumulatedPath = "/"
 
-        for component in currentPath.split(separator: "/") {
-            path += "/" + component
-            components.append(PathComponent(name: String(component), path: path))
+        let parts = currentPath.split(separator: "/", omittingEmptySubsequences: true)
+        
+        for component in parts {
+            let componentString = String(component)
+            currentAccumulatedPath = currentAccumulatedPath.appendingPathComponent(componentString)
+            
+            // Ensure path ends with / for breadcrumb navigation to directories
+            let pathWithSlash = currentAccumulatedPath.hasSuffix("/") ? currentAccumulatedPath : currentAccumulatedPath + "/"
+            components.append(PathComponent(name: componentString, path: pathWithSlash))
         }
-
-        if components.isEmpty {
-            components.append(PathComponent(name: "/", path: "/"))
-        }
-
+        
         return components
     }
 
@@ -261,19 +263,33 @@ final class FileBrowserViewModel {
         try await fileRepository.listFiles(at: path)
     }
 
-    func navigateTo(_ path: String) async {
+    func navigateTo(_ path: String, addToHistory: Bool = true) async {
         state = .loading
 
         do {
-            files = try await fileRepository.listFiles(at: path)
+            logInfo("Navigating to: \(path) (history: \(addToHistory))", category: .ui)
+            
+            let newFiles = try await fileRepository.listFiles(at: path)
+            
+            let newPath: String
             if connection.connectionType == .s3 {
-                currentPath = await s3Session?.currentPath ?? "/"
+                newPath = await s3Session?.currentPath ?? "/"
             } else {
-                currentPath = await sftpSession?.currentPath ?? "/"
+                newPath = await sftpSession?.currentPath ?? "/"
             }
-            navigationService.navigate(to: currentPath)
-            selectedFiles.removeAll()
-            state = .success(())
+            
+            // Update state atomically on MainActor
+            self.files = newFiles
+            self.currentPath = newPath
+            
+            if addToHistory {
+                navigationService.navigate(to: newPath)
+            }
+            
+            self.selectedFiles.removeAll()
+            self.state = .success(())
+            
+            logInfo("Successfully navigated to: \(newPath)", category: .ui)
         } catch {
             logError("Failed to navigate to \(path): \(error)", category: connection.connectionType == .s3 ? .s3 : .sftp)
             state = .error(AppError.from(error))
@@ -290,13 +306,13 @@ final class FileBrowserViewModel {
 
     func goBack() async {
         if let path = navigationService.goBack() {
-            await navigateWithoutHistory(to: path)
+            await navigateTo(path, addToHistory: false)
         }
     }
 
     func goForward() async {
         if let path = navigationService.goForward() {
-            await navigateWithoutHistory(to: path)
+            await navigateTo(path, addToHistory: false)
         }
     }
 
@@ -859,7 +875,7 @@ final class FileBrowserViewModel {
 
 // MARK: - Path Component
 struct PathComponent: Identifiable, Equatable {
-    let id = UUID()
+    var id: String { path }
     let name: String
     let path: String
 

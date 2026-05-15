@@ -53,7 +53,7 @@ extension String {
     }
 
     /// Normalizes a path by resolving . and ..
-    var normalizedPath: String {
+    nonisolated var normalizedPath: String {
         var components: [String] = []
         for component in split(separator: "/") {
             let part = String(component)

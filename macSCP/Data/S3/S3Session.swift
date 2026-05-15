@@ -617,6 +617,11 @@ actor S3Session: S3SessionProtocol {
         if prefix == "/" || prefix.isEmpty {
             return ""
         }
+        
+        if !prefix.hasSuffix("/") {
+            prefix += "/"
+        }
+        
         return prefix
     }
 
