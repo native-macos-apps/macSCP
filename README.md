@@ -1,35 +1,8 @@
-<br/>
-
-> [!IMPORTANT]
-> ## macSCP has evolved into [AnySCP](https://github.com/macnev2013/anySCP) 🎉
->
-> macSCP is no longer actively maintained. After hitting limitations with macOS-only support, OS-specific bugs, and the difficulty of maintaining a SwiftUI-only codebase, I rebuilt the app from scratch as **[AnySCP](https://github.com/macnev2013/anySCP)** — a cross-platform desktop client that runs on **macOS, Windows, and Linux**.
->
-> AnySCP includes everything macSCP offered and much more:
-> - **Cross-platform** — runs natively on macOS, Windows, and Linux
-> - **Split terminal panes** — horizontal and vertical splits within SSH sessions
-> - **SSH port forwarding** — local and remote tunnels with service presets
-> - **Command snippets** — save and organize frequently used commands with parameterized templates
-> - **Drag-and-drop uploads** — drop files directly into the remote file browser or S3 bucket
-> - **Concurrent transfers** — parallel file transfers with real-time progress, speed, and ETA
-> - **VS Code integration** — edit remote files in VS Code with automatic re-upload on save
-> - **Privacy-first** — credentials stored in your OS keychain, fully offline, no account required
->
-> **👉 [Download AnySCP](https://github.com/macnev2013/anySCP/releases)**
->
-> Thank you to everyone who used and supported macSCP!
-
-<br/>
-
 <p align="center">
   <img src="screens/logo.png" alt="macSCP Logo" width="200"/>
 </p>
 
 <h1 align="center">macSCP</h1>
-
-<p align="center">
-  <strong>⚠️ Deprecated — see <a href="https://github.com/macnev2013/anySCP">AnySCP</a> for the actively maintained successor</strong>
-</p>
 
 <p align="center">
   <a href="#features">Features</a> •
