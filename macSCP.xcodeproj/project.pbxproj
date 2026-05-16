@@ -9,9 +9,6 @@
 /* Begin PBXBuildFile section */
 		4721B3DC2F2F229B00279B18 /* TelemetryClient in Frameworks */ = {isa = PBXBuildFile; productRef = 4721B3DB2F2F229B00279B18 /* TelemetryClient */; };
 		47384BA32E96FC5200ECB4B5 /* Citadel in Frameworks */ = {isa = PBXBuildFile; productRef = 47384BA22E96FC5200ECB4B5 /* Citadel */; };
-		47679DD22F33D7E3002F804C /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = 47679DD12F33D7E3002F804C /* SwiftTerm */; };
-		47679DD42F33D7E3002F804C /* SwiftTermFuzz in Frameworks */ = {isa = PBXBuildFile; productRef = 47679DD32F33D7E3002F804C /* SwiftTermFuzz */; };
-		47679DD62F33D7E3002F804C /* termcast in Frameworks */ = {isa = PBXBuildFile; productRef = 47679DD52F33D7E3002F804C /* termcast */; };
 		47AD46FB2F3E3B2E0043EA07 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 47AD46FA2F3E3B2E0043EA07 /* Sparkle */; };
 		47S3SOTO2F3000000000A1A1 /* AWSS3 in Frameworks */ = {isa = PBXBuildFile; productRef = 47S3SOTO2F3000000000A1A0 /* AWSS3 */; };
 /* End PBXBuildFile section */
@@ -85,10 +82,7 @@
 				47AD46FB2F3E3B2E0043EA07 /* Sparkle in Frameworks */,
 				47384BA32E96FC5200ECB4B5 /* Citadel in Frameworks */,
 				4721B3DC2F2F229B00279B18 /* TelemetryClient in Frameworks */,
-				47679DD22F33D7E3002F804C /* SwiftTerm in Frameworks */,
 				47S3SOTO2F3000000000A1A1 /* AWSS3 in Frameworks */,
-				47679DD42F33D7E3002F804C /* SwiftTermFuzz in Frameworks */,
-				47679DD62F33D7E3002F804C /* termcast in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -169,9 +163,6 @@
 				47384BA22E96FC5200ECB4B5 /* Citadel */,
 				4721B3DB2F2F229B00279B18 /* TelemetryClient */,
 				47S3SOTO2F3000000000A1A0 /* AWSS3 */,
-				47679DD12F33D7E3002F804C /* SwiftTerm */,
-				47679DD32F33D7E3002F804C /* SwiftTermFuzz */,
-				47679DD52F33D7E3002F804C /* termcast */,
 				47AD46FA2F3E3B2E0043EA07 /* Sparkle */,
 			);
 			productName = macSCP;
@@ -237,7 +228,6 @@
 				47384BA12E96FC5200ECB4B5 /* XCRemoteSwiftPackageReference "Citadel" */,
 				4721B3DA2F2F229B00279B18 /* XCRemoteSwiftPackageReference "SwiftClient" */,
 				47S3SOTO2F3000000000A1A2 /* XCRemoteSwiftPackageReference "aws-sdk-swift" */,
-				47679DD02F33D7E3002F804C /* XCRemoteSwiftPackageReference "SwiftTerm" */,
 				47AD46F92F3E3B2E0043EA07 /* XCRemoteSwiftPackageReference "Sparkle" */,
 			);
 			preferredProjectObjectVersion = 77;
@@ -694,14 +684,6 @@
 				minimumVersion = 0.11.1;
 			};
 		};
-		47679DD02F33D7E3002F804C /* XCRemoteSwiftPackageReference "SwiftTerm" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/migueldeicaza/SwiftTerm";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 1.5.0;
-			};
-		};
 		47AD46F92F3E3B2E0043EA07 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/sparkle-project/Sparkle";
@@ -730,21 +712,6 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 47384BA12E96FC5200ECB4B5 /* XCRemoteSwiftPackageReference "Citadel" */;
 			productName = Citadel;
-		};
-		47679DD12F33D7E3002F804C /* SwiftTerm */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 47679DD02F33D7E3002F804C /* XCRemoteSwiftPackageReference "SwiftTerm" */;
-			productName = SwiftTerm;
-		};
-		47679DD32F33D7E3002F804C /* SwiftTermFuzz */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 47679DD02F33D7E3002F804C /* XCRemoteSwiftPackageReference "SwiftTerm" */;
-			productName = SwiftTermFuzz;
-		};
-		47679DD52F33D7E3002F804C /* termcast */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 47679DD02F33D7E3002F804C /* XCRemoteSwiftPackageReference "SwiftTerm" */;
-			productName = termcast;
 		};
 		47AD46FA2F3E3B2E0043EA07 /* Sparkle */ = {
 			isa = XCSwiftPackageProductDependency;
