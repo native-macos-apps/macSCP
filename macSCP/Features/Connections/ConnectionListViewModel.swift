@@ -40,7 +40,6 @@ final class ConnectionListViewModel {
 
     // Window opening state
     var pendingWindowId: String?
-    var pendingTerminalWindowId: String?
 
     // MARK: - Dependencies
     private let connectionRepository: ConnectionRepositoryProtocol
@@ -372,10 +371,6 @@ final class ConnectionListViewModel {
         pendingWindowId = nil
     }
 
-    func clearPendingTerminalWindow() {
-        pendingTerminalWindowId = nil
-    }
-
     // MARK: - Terminal Operations
 
     func openTerminal(for connection: Connection, password: String) {
@@ -385,21 +380,12 @@ final class ConnectionListViewModel {
             return
         }
 
-        let data = TerminalWindowData(
-            connectionId: connection.id,
-            connectionName: connection.name,
+        TerminalLauncher.launchTerminal(
             host: connection.host,
             port: connection.port,
             username: connection.username,
-            password: password,
-            authMethod: connection.authMethod,
-            privateKeyPath: connection.privateKeyPath,
-            securityScopedBookmarkData: connection.securityScopedBookmarkData
+            privateKeyPath: connection.privateKeyPath
         )
-
-        let windowId = windowManager.storeTerminalData(data)
-        logInfo("Stored terminal window data with ID: \(windowId)", category: .ui)
-        pendingTerminalWindowId = windowId
     }
 
     func requestTerminal(for connection: Connection) {

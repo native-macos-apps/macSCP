@@ -16,5 +16,9 @@
 	<array>
 		<string>$(AppIdentifierPrefix)com.macSCP.keychain</string>
 	</array>
+	<key>com.apple.security.temporary-exception.apple-events</key>
+	<array>
+		<string>com.apple.terminal</string>
+	</array>
 </dict>
 </plist>

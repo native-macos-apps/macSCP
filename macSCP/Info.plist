@@ -25,5 +25,7 @@
     <true/>
     <key>SUScheduledCheckInterval</key>
     <integer>86400</integer>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>macSCP needs permission to automate Terminal to open SSH sessions.</string>
 </dict>
 </plist>

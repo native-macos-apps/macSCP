@@ -67,7 +67,6 @@ final class FileBrowserViewModel {
     // Window opening state
     var pendingFileInfoWindowId: String?
     var pendingEditorWindowId: String?
-    var pendingTerminalWindowId: String?
 
     // MARK: - Connection Info
     let connection: Connection
@@ -841,10 +840,6 @@ final class FileBrowserViewModel {
         pendingEditorWindowId = nil
     }
 
-    func clearPendingTerminalWindow() {
-        pendingTerminalWindowId = nil
-    }
-
     // MARK: - Terminal
 
     func openTerminal() {
@@ -854,21 +849,15 @@ final class FileBrowserViewModel {
             return
         }
 
-        let data = TerminalWindowData(
-            connectionId: connection.id,
-            connectionName: connection.name,
+        TerminalLauncher.launchTerminal(
             host: connection.host,
             port: connection.port,
             username: connection.username,
-            password: password,
-            authMethod: connection.authMethod,
             privateKeyPath: connection.privateKeyPath,
-            securityScopedBookmarkData: connection.securityScopedBookmarkData
+            initialPath: currentPath
         )
-
-        let windowId = WindowManager.shared.storeTerminalData(data)
-        pendingTerminalWindowId = windowId
-        logInfo("Opening terminal from file browser", category: .ui)
+        
+        logInfo("Opening native terminal from file browser at \(currentPath)", category: .ui)
     }
 
     func clearError() {
