@@ -88,9 +88,16 @@ actor SFTPSession: SFTPSessionProtocol {
 
             if let bookmarkData = bookmarkData {
                 privateKeyURL = try URL(resolvingBookmarkData: bookmarkData, options: .withSecurityScope, relativeTo: nil, bookmarkDataIsStale: &isStale)
+                if isStale {
+                    logWarning("Private key bookmark is stale for \(privateKeyURL.path)", category: .sftp)
+                }
                 accessedSecurityScope = privateKeyURL.startAccessingSecurityScopedResource()
+                if !accessedSecurityScope {
+                    throw AppError.connectionFailed("Couldn't access the saved private key. Re-select the key file in the connection settings.")
+                }
             } else {
                 privateKeyURL = URL(fileURLWithPath: privateKeyPath)
+                logWarning("Private key connection is missing security-scoped bookmark data for \(privateKeyURL.path)", category: .sftp)
             }
 
             defer {
@@ -99,7 +106,21 @@ actor SFTPSession: SFTPSessionProtocol {
                 }
             }
 
-            let privateKeyData = try Data(contentsOf: privateKeyURL)
+            let privateKeyData: Data
+            do {
+                privateKeyData = try Data(contentsOf: privateKeyURL)
+            } catch {
+                let nsError = error as NSError
+                let isPermissionError =
+                    nsError.domain == NSCocoaErrorDomain &&
+                    (nsError.code == NSFileReadNoPermissionError || nsError.code == NSFileReadNoSuchFileError)
+
+                if isPermissionError, bookmarkData != nil {
+                    throw AppError.connectionFailed("Couldn't access the saved private key. Re-select the key file in the connection settings.")
+                }
+
+                throw error
+            }
             
             // Load the private key as a string for Citadel's detection and parsing
             let privateKeyString = String(data: privateKeyData, encoding: .utf8) ?? ""

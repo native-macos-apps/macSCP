@@ -64,6 +64,7 @@ struct FileBrowserWindow: View {
             username: data.username,
             authMethod: data.authMethod,
             privateKeyPath: data.privateKeyPath,
+            securityScopedBookmarkData: data.securityScopedBookmarkData,
             connectionType: data.connectionType,
             s3Region: data.s3Region,
             s3Bucket: data.s3Bucket,
