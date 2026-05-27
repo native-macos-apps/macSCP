@@ -9,12 +9,14 @@ import SwiftUI
 
 struct FileListView: View {
     @Bindable var viewModel: FileBrowserViewModel
+    let files: [RemoteFile]
     let onOpenEditor: (RemoteFile) -> Void
     let onGetInfo: (RemoteFile) -> Void
 
     var body: some View {
         NativeFileTableView(
             viewModel: viewModel,
+            files: files,
             onDoubleClick: handleDoubleClick,
             onGetInfo: onGetInfo,
             onOpenEditor: onOpenEditor
@@ -40,6 +42,7 @@ struct FileListView: View {
             sftpSession: SFTPSession(),
             password: "test"
         ),
+        files: [],
         onOpenEditor: { _ in },
         onGetInfo: { _ in }
     )

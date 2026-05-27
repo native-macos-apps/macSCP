@@ -10,9 +10,25 @@ import SwiftUI
 struct FileBrowserView: View {
     @Bindable var viewModel: FileBrowserViewModel
     @Environment(\.openWindow) private var openWindow
+    @FocusState private var isSearchFieldFocused: Bool
+    @State private var searchText = ""
+    @State private var isShowingSearch = false
 
     init(viewModel: FileBrowserViewModel) {
         self.viewModel = viewModel
+    }
+
+    private var filteredFiles: [RemoteFile] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return viewModel.sortedFiles }
+
+        return viewModel.sortedFiles.filter {
+            $0.name.localizedStandardContains(query)
+        }
+    }
+
+    private var isSearching: Bool {
+        !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     var body: some View {
@@ -28,6 +44,11 @@ struct FileBrowserView: View {
             )
 
             Divider()
+
+            if isShowingSearch {
+                fileSearchBar
+                Divider()
+            }
 
             // Content
             contentView
@@ -145,9 +166,32 @@ struct FileBrowserView: View {
                 }
                 .help("Sort Options")
             }
+
+            ToolbarItem(id: "search", placement: .primaryAction) {
+                Button {
+                    showSearch()
+                } label: {
+                    Label("Search", systemImage: "magnifyingglass")
+                }
+                .keyboardShortcut("f", modifiers: .command)
+                .help("Search Files")
+            }
         }
         .task {
             await viewModel.connect()
+        }
+        .onKeyPress(.escape) {
+            guard isShowingSearch else { return .ignored }
+            closeSearch(clearText: true)
+            return .handled
+        }
+        .onChange(of: isShowingSearch) { _, isShowing in
+            if isShowing {
+                isSearchFieldFocused = true
+            }
+        }
+        .onChange(of: viewModel.currentPath) { _, _ in
+            closeSearch(clearText: true)
         }
         .sheet(isPresented: $viewModel.isShowingNewFolderSheet) {
             NameInputSheet.newFolder(
@@ -227,11 +271,16 @@ struct FileBrowserView: View {
             LoadingView(message: viewModel.isConnected ? "Loading..." : "Connecting...")
 
         case .success:
-            FileListView(
-                viewModel: viewModel,
-                onOpenEditor: openFileInEditor,
-                onGetInfo: showFileInfo
-            )
+            if filteredFiles.isEmpty, isSearching {
+                EmptyStateView.noSearchResults
+            } else {
+                FileListView(
+                    viewModel: viewModel,
+                    files: filteredFiles,
+                    onOpenEditor: openFileInEditor,
+                    onGetInfo: showFileInfo
+                )
+            }
 
         case .error(let error):
             ErrorView(error: error) {
@@ -244,6 +293,37 @@ struct FileBrowserView: View {
                 }
             }
         }
+    }
+
+    private var fileSearchBar: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.secondary)
+
+            TextField("Search files by name", text: $searchText)
+                .textFieldStyle(.plain)
+                .focused($isSearchFieldFocused)
+
+            if !searchText.isEmpty {
+                Button {
+                    searchText = ""
+                    isSearchFieldFocused = true
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Clear Search")
+            }
+
+            Button("Done") {
+                closeSearch(clearText: true)
+            }
+            .buttonStyle(.borderless)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.bar)
     }
 
     private var statusBar: some View {
@@ -275,7 +355,7 @@ struct FileBrowserView: View {
 
             // File count
             HStack(spacing: 6) {
-                Text("\(viewModel.sortedFiles.count) items")
+                Text(fileCountText)
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
 
@@ -291,6 +371,13 @@ struct FileBrowserView: View {
         .background(.bar)
     }
 
+    private var fileCountText: String {
+        if isSearching {
+            return "\(filteredFiles.count) of \(viewModel.sortedFiles.count) items"
+        }
+        return "\(viewModel.sortedFiles.count) items"
+    }
+
     private func openFileInEditor(_ file: RemoteFile) {
         Task {
             do {
@@ -304,6 +391,19 @@ struct FileBrowserView: View {
 
     private func showFileInfo(_ file: RemoteFile) {
         viewModel.showFileInfo(file)
+    }
+
+    private func showSearch() {
+        isShowingSearch = true
+        isSearchFieldFocused = true
+    }
+
+    private func closeSearch(clearText: Bool) {
+        isShowingSearch = false
+        isSearchFieldFocused = false
+        if clearText {
+            searchText = ""
+        }
     }
 }
 

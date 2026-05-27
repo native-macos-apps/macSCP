@@ -30,17 +30,20 @@ final class FileTreeNode {
 
 struct NativeFileTableView: NSViewRepresentable {
     @Bindable var viewModel: FileBrowserViewModel
+    let files: [RemoteFile]
     let onDoubleClick: (RemoteFile) -> Void
     let onGetInfo: (RemoteFile) -> Void
     let onOpenEditor: ((RemoteFile) -> Void)?
 
     init(
         viewModel: FileBrowserViewModel,
+        files: [RemoteFile],
         onDoubleClick: @escaping (RemoteFile) -> Void,
         onGetInfo: @escaping (RemoteFile) -> Void,
         onOpenEditor: ((RemoteFile) -> Void)? = nil
     ) {
         self.viewModel = viewModel
+        self.files = files
         self.onDoubleClick = onDoubleClick
         self.onGetInfo = onGetInfo
         self.onOpenEditor = onOpenEditor
@@ -129,6 +132,7 @@ struct NativeFileTableView: NSViewRepresentable {
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         let coordinator = context.coordinator
         coordinator.viewModel      = viewModel
+        coordinator.files          = files
         coordinator.onDoubleClick  = onDoubleClick
         coordinator.onGetInfo      = onGetInfo
 
@@ -156,6 +160,7 @@ struct NativeFileTableView: NSViewRepresentable {
     func makeCoordinator() -> Coordinator {
         Coordinator(
             viewModel: viewModel,
+            files: files,
             onDoubleClick: onDoubleClick,
             onGetInfo: onGetInfo,
             onOpenEditor: onOpenEditor
@@ -172,6 +177,7 @@ struct NativeFileTableView: NSViewRepresentable {
                        ContextMenuOutlineViewDelegate {
 
         var viewModel: FileBrowserViewModel
+        var files: [RemoteFile]
         var onDoubleClick: (RemoteFile) -> Void
         var onGetInfo: (RemoteFile) -> Void
         var onOpenEditor: ((RemoteFile) -> Void)?
@@ -186,11 +192,13 @@ struct NativeFileTableView: NSViewRepresentable {
 
         init(
             viewModel: FileBrowserViewModel,
+            files: [RemoteFile],
             onDoubleClick: @escaping (RemoteFile) -> Void,
             onGetInfo: @escaping (RemoteFile) -> Void,
             onOpenEditor: ((RemoteFile) -> Void)?
         ) {
             self.viewModel      = viewModel
+            self.files          = files
             self.onDoubleClick  = onDoubleClick
             self.onGetInfo      = onGetInfo
             self.onOpenEditor   = onOpenEditor
@@ -205,7 +213,7 @@ struct NativeFileTableView: NSViewRepresentable {
             let existingByPath = Dictionary(
                 uniqueKeysWithValues: rootNodes.map { ($0.file.path, $0) }
             )
-            rootNodes = viewModel.sortedFiles.map { file in
+            rootNodes = files.map { file in
                 if let existing = existingByPath[file.path] {
                     return existing
                 }
