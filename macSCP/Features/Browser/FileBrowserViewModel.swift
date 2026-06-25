@@ -168,15 +168,23 @@ final class FileBrowserViewModel {
         var components: [PathComponent] = []
         var currentAccumulatedPath = "/"
 
-        let parts = currentPath.split(separator: "/", omittingEmptySubsequences: true)
+        let targetPath = primarySelectedFile?.path ?? currentPath
+        let parts = targetPath.split(separator: "/", omittingEmptySubsequences: true)
         
-        for component in parts {
+        for (index, component) in parts.enumerated() {
             let componentString = String(component)
             currentAccumulatedPath = currentAccumulatedPath.appendingPathComponent(componentString)
             
-            // Ensure path ends with / for breadcrumb navigation to directories
-            let pathWithSlash = currentAccumulatedPath.hasSuffix("/") ? currentAccumulatedPath : currentAccumulatedPath + "/"
-            components.append(PathComponent(name: componentString, path: pathWithSlash))
+            let isLast = index == parts.count - 1
+            let isSelectedFile = isLast && primarySelectedFile != nil && !(primarySelectedFile?.isDirectory ?? true)
+            
+            let path: String
+            if isSelectedFile {
+                path = currentAccumulatedPath
+            } else {
+                path = currentAccumulatedPath.hasSuffix("/") ? currentAccumulatedPath : currentAccumulatedPath + "/"
+            }
+            components.append(PathComponent(name: componentString, path: path))
         }
         
         return components

@@ -33,18 +33,6 @@ struct FileBrowserView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Breadcrumb path bar
-            BreadcrumbView(
-                components: viewModel.pathComponents,
-                onNavigate: { path in
-                    Task {
-                        await viewModel.navigateTo(path)
-                    }
-                }
-            )
-
-            Divider()
-
             if isShowingSearch {
                 fileSearchBar
                 Divider()
@@ -323,54 +311,47 @@ struct FileBrowserView: View {
 
     private var statusBar: some View {
         HStack(spacing: 12) {
-            // Connection status
-            HStack(spacing: 5) {
-                Circle()
-                    .fill(viewModel.isConnected ? Color.green : Color.red)
-                    .frame(width: 7, height: 7)
+            // Breadcrumb path bar on the left
+            BreadcrumbView(
+                components: viewModel.pathComponents,
+                onNavigate: { path in
+                    if let selected = viewModel.primarySelectedFile, selected.path == path, !selected.isDirectory {
+                        return
+                    }
+                    Task {
+                        await viewModel.navigateTo(path)
+                    }
+                }
+            )
 
-                Text(viewModel.isConnected ? "Connected" : "Disconnected")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-            }
+            Spacer(minLength: 12)
 
-            Spacer()
+            // Right-side indicators (Transfers, Clipboard, Connection)
+            HStack(spacing: 12) {
+                if viewModel.hasActiveTransfers {
+                    ActiveTransfersIndicator(viewModel: viewModel)
+                }
 
-            // Active transfers indicator (clicking opens the popover)
-            if viewModel.hasActiveTransfers {
-                ActiveTransfersIndicator(viewModel: viewModel)
-            }
+                if viewModel.hasClipboardItems && !viewModel.hasActiveTransfers {
+                    ClipboardStatusView(displayText: viewModel.clipboardDisplayText)
+                }
 
-            // Clipboard status
-            if viewModel.hasClipboardItems && !viewModel.hasActiveTransfers {
-                ClipboardStatusView(displayText: viewModel.clipboardDisplayText)
-            }
+                // Connection status
+                HStack(spacing: 5) {
+                    Circle()
+                        .fill(viewModel.isConnected ? Color.green : Color.red)
+                        .frame(width: 7, height: 7)
 
-            Spacer()
-
-            // File count
-            HStack(spacing: 6) {
-                Text(fileCountText)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-
-                if !viewModel.selectedFiles.isEmpty {
-                    Text("\(viewModel.selectedFiles.count) selected")
-                        .font(.system(size: 11, weight: .medium))
+                    Text(viewModel.isConnected ? "Connected" : "Disconnected")
+                        .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                 }
             }
+            .fixedSize(horizontal: true, vertical: false)
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 6)
+        .padding(.vertical, 4)
         .background(.bar)
-    }
-
-    private var fileCountText: String {
-        if isSearching {
-            return "\(filteredFiles.count) of \(viewModel.sortedFiles.count) items"
-        }
-        return "\(viewModel.sortedFiles.count) items"
     }
 
     private func openFileInEditor(_ file: RemoteFile) {

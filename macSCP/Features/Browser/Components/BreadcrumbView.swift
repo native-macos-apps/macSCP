@@ -30,8 +30,8 @@ struct BreadcrumbView: View {
                             .id(component.path)
                     }
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 4)
+                .padding(.horizontal, 0)
+                .padding(.vertical, 2)
             }
             .onChange(of: components) { _, newComponents in
                 if let lastPath = newComponents.last?.path {
@@ -41,8 +41,7 @@ struct BreadcrumbView: View {
                 }
             }
         }
-        .frame(height: 28)
-        .background(.bar)
+        .frame(height: 22)
     }
 
     @ViewBuilder
