@@ -112,15 +112,7 @@ struct FileBrowserView: View {
                 .help("Upload Files")
             }
 
-            ToolbarItem(id: "delete", placement: .primaryAction) {
-                Button {
-                    viewModel.confirmDeleteSelected()
-                } label: {
-                    Label("Delete", systemImage: "trash")
-                }
-                .disabled(viewModel.selectedFiles.isEmpty)
-                .help("Delete Selected")
-            }
+
 
             ToolbarItem(id: "spacer1", placement: .primaryAction) {
                 Spacer()
@@ -142,31 +134,6 @@ struct FileBrowserView: View {
                 .help("Toggle Hidden Files")
             }
 
-            ToolbarItem(id: "sort", placement: .primaryAction) {
-                Menu {
-                    ForEach(RemoteFile.SortCriteria.allCases, id: \.self) { criteria in
-                        Button {
-                            if viewModel.sortCriteria == criteria {
-                                viewModel.sortAscending.toggle()
-                            } else {
-                                viewModel.sortCriteria = criteria
-                                viewModel.sortAscending = true
-                            }
-                        } label: {
-                            HStack {
-                                Text(criteria.rawValue)
-                                if viewModel.sortCriteria == criteria {
-                                    Image(systemName: viewModel.sortAscending ? "chevron.up" : "chevron.down")
-                                }
-                            }
-                        }
-                    }
-                } label: {
-                    Label("Sort", systemImage: "arrow.up.arrow.down")
-                }
-                .help("Sort Options")
-            }
-
             ToolbarItem(id: "search", placement: .primaryAction) {
                 Button {
                     showSearch()
@@ -176,15 +143,33 @@ struct FileBrowserView: View {
                 .keyboardShortcut("f", modifiers: .command)
                 .help("Search Files")
             }
+
+            ToolbarItem(id: "preview", placement: .primaryAction) {
+                Toggle(isOn: Binding(
+                    get: { viewModel.isShowingQuickLook },
+                    set: { _ in viewModel.toggleQuickLook() }
+                )) {
+                    Label(
+                        viewModel.isShowingQuickLook ? "Hide Preview" : "Show Preview",
+                        systemImage: "sidebar.right"
+                    )
+                }
+                .help("Toggle Preview Panel")
+            }
         }
         .task {
             await viewModel.connect()
         }
         .onKeyPress(.escape) {
+            if viewModel.isShowingQuickLook {
+                viewModel.isShowingQuickLook = false
+                return .handled
+            }
             guard isShowingSearch else { return .ignored }
             closeSearch(clearText: true)
             return .handled
         }
+
         .onChange(of: isShowingSearch) { _, isShowing in
             if isShowing {
                 isSearchFieldFocused = true
@@ -274,12 +259,22 @@ struct FileBrowserView: View {
             if filteredFiles.isEmpty, isSearching {
                 EmptyStateView.noSearchResults
             } else {
-                FileListView(
-                    viewModel: viewModel,
-                    files: filteredFiles,
-                    onOpenEditor: openFileInEditor,
-                    onGetInfo: showFileInfo
-                )
+                HSplitView {
+                    FileListView(
+                        viewModel: viewModel,
+                        files: filteredFiles,
+                        onOpenEditor: openFileInEditor,
+                        onGetInfo: showFileInfo
+                    )
+                    .frame(minWidth: 400, maxWidth: .infinity)
+
+                    if viewModel.isShowingQuickLook {
+                        QuickLookPreviewView(viewModel: viewModel)
+                            .frame(minWidth: 250, idealWidth: 340, maxWidth: 500)
+                            .transition(.move(edge: .trailing))
+                    }
+                }
+                .animation(.spring(response: 0.3, dampingFraction: 0.85), value: viewModel.isShowingQuickLook)
             }
 
         case .error(let error):

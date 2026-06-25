@@ -135,6 +135,7 @@ struct NativeFileTableView: NSViewRepresentable {
         coordinator.files          = files
         coordinator.onDoubleClick  = onDoubleClick
         coordinator.onGetInfo      = onGetInfo
+        coordinator.onOpenEditor   = onOpenEditor
 
         guard let outlineView = coordinator.outlineView else { return }
 
@@ -372,12 +373,17 @@ struct NativeFileTableView: NSViewRepresentable {
         func outlineViewSelectionDidChange(_ notification: Notification) {
             guard !isUpdating, let ov = outlineView else { return }
             var sel = Set<UUID>()
+            var firstSelectedFile: RemoteFile?
             for row in ov.selectedRowIndexes {
                 if let n = ov.item(atRow: row) as? FileTreeNode {
                     sel.insert(n.file.id)
+                    if firstSelectedFile == nil {
+                        firstSelectedFile = n.file
+                    }
                 }
             }
             viewModel.selectedFiles = sel
+            viewModel.primarySelectedFile = firstSelectedFile
         }
 
         // ── Sort ──────────────────────────────────────────────────────────────

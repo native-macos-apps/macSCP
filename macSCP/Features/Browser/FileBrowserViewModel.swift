@@ -50,9 +50,34 @@ final class FileBrowserViewModel {
     }
 
     var selectedFiles: Set<UUID> = []
+    var primarySelectedFile: RemoteFile? {
+        didSet {
+            if isShowingQuickLook {
+                if let file = primarySelectedFile {
+                    showQuickLook(for: file)
+                } else {
+                    quickLookFile = nil
+                    quickLookTask?.cancel()
+                }
+            }
+        }
+    }
     var sortCriteria: RemoteFile.SortCriteria = .name
     var sortAscending: Bool = true
     var showHiddenFiles: Bool = false
+
+    // Quick Look state
+    var isShowingQuickLook: Bool = false {
+        didSet {
+            if !isShowingQuickLook {
+                quickLookTask?.cancel()
+            }
+        }
+    }
+    var quickLookFile: RemoteFile?
+    private(set) var quickLookContent: QuickLookContent = .loading
+    private var quickLookCache: [String: QuickLookContent] = [:]
+    private var quickLookTask: Task<Void, Never>?
 
     // Sheet states
     var isShowingNewFolderSheet = false
@@ -882,6 +907,112 @@ final class FileBrowserViewModel {
 
     func clearError() {
         error = nil
+    }
+
+    // MARK: - Quick Look
+
+    func toggleQuickLook() {
+        if isShowingQuickLook {
+            isShowingQuickLook = false
+            quickLookTask?.cancel()
+        } else {
+            if let file = primarySelectedFile {
+                showQuickLook(for: file)
+            }
+        }
+    }
+
+    /// Opens the Quick Look panel for a specific file.
+    func showQuickLook(for file: RemoteFile) {
+        isShowingQuickLook = true
+
+        // If already showing this file, no-op
+        if quickLookFile?.id == file.id { return }
+
+        quickLookFile = file
+        quickLookTask?.cancel()
+
+        // Check cache first
+        if let cached = quickLookCache[file.path] {
+            quickLookContent = cached
+            return
+        }
+
+        quickLookContent = .loading
+        quickLookTask = Task { @MainActor in
+            await loadQuickLookContent(for: file)
+        }
+    }
+
+    /// Loads content for the given file and caches the result.
+    private func loadQuickLookContent(for file: RemoteFile) async {
+        // Directories and large files → metadata only
+        if file.isDirectory || file.size > FileOperationConstants.maxFilePreviewSize {
+            let result = QuickLookContent.unsupported
+            quickLookCache[file.path] = result
+            if quickLookFile?.id == file.id {
+                quickLookContent = result
+            }
+            return
+        }
+
+        let fileType = file.fileType
+        do {
+            switch fileType {
+            case .image:
+                // Download to a temp location then read Data
+                let tempURL = FileManager.default.temporaryDirectory
+                    .appendingPathComponent(UUID().uuidString + "_" + file.name)
+                try await fileRepository.download(remotePath: file.path, to: tempURL) { _ in }
+                let data = try Data(contentsOf: tempURL)
+                try? FileManager.default.removeItem(at: tempURL)
+                let result = QuickLookContent.image(data)
+                quickLookCache[file.path] = result
+                if !Task.isCancelled, quickLookFile?.id == file.id {
+                    quickLookContent = result
+                }
+
+            case .pdf:
+                let tempURL = FileManager.default.temporaryDirectory
+                    .appendingPathComponent(UUID().uuidString + "_" + file.name)
+                try await fileRepository.download(remotePath: file.path, to: tempURL) { _ in }
+                let data = try Data(contentsOf: tempURL)
+                try? FileManager.default.removeItem(at: tempURL)
+                let result = QuickLookContent.pdf(data)
+                quickLookCache[file.path] = result
+                if !Task.isCancelled, quickLookFile?.id == file.id {
+                    quickLookContent = result
+                }
+
+            case .text, .code, .configuration:
+                let content = try await fileRepository.readFileContent(at: file.path)
+                let result = QuickLookContent.text(content)
+                quickLookCache[file.path] = result
+                if !Task.isCancelled, quickLookFile?.id == file.id {
+                    quickLookContent = result
+                }
+
+            default:
+                let result = QuickLookContent.unsupported
+                quickLookCache[file.path] = result
+                if !Task.isCancelled, quickLookFile?.id == file.id {
+                    quickLookContent = result
+                }
+            }
+        } catch {
+            guard !Task.isCancelled else { return }
+            let result = QuickLookContent.error(error.localizedDescription)
+            quickLookCache[file.path] = result
+            if quickLookFile?.id == file.id {
+                quickLookContent = result
+            }
+        }
+    }
+
+    /// Closes the Quick Look panel.
+    func closeQuickLook() {
+        isShowingQuickLook = false
+        quickLookTask?.cancel()
     }
 }
 
