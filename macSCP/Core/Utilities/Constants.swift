@@ -10,11 +10,11 @@ import SwiftUI
 
 // MARK: - App Constants
 enum AppConstants {
-    static let bundleIdentifier = "com.macSCP"
-    static let keychainService = "com.macSCP.ssh"
-    static let keychainS3Service = "com.macSCP.s3"
-    static let defaultSSHPort = 22
-    static let maxRecentConnections = 10
+    nonisolated static let bundleIdentifier = "com.macSCP"
+    nonisolated static let keychainService = "com.macSCP.ssh"
+    nonisolated static let keychainS3Service = "com.macSCP.s3"
+    nonisolated static let defaultSSHPort = 22
+    nonisolated static let maxRecentConnections = 10
 }
 
 // MARK: - Window Identifiers
@@ -49,8 +49,8 @@ enum UIConstants {
 
 // MARK: - File Operations
 enum FileOperationConstants {
-    static let chunkSize = 1024 * 1024 // 1MB chunks for file transfer
-    static let maxFilePreviewSize: Int64 = 10 * 1024 * 1024 // 10MB max for preview
-    static let defaultPermissions: UInt16 = 0o644
-    static let directoryPermissions: UInt16 = 0o755
+    nonisolated static let chunkSize = 1024 * 1024 // 1MB chunks for file transfer
+    nonisolated static let maxFilePreviewSize: Int64 = 10 * 1024 * 1024 // 10MB max for preview
+    nonisolated static let defaultPermissions: UInt16 = 0o644
+    nonisolated static let directoryPermissions: UInt16 = 0o755
 }

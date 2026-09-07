@@ -50,12 +50,7 @@ final class DataStore {
 
     /// Attempts to recover from database corruption by recreating the store
     static func createWithRecovery() -> ModelContainer {
-        do {
-            return DataStore.shared.modelContainer
-        } catch {
-            logError("Database recovery failed: \(error)", category: .database)
-            fatalError("Cannot recover database: \(error)")
-        }
+        DataStore.shared.modelContainer
     }
 }
 

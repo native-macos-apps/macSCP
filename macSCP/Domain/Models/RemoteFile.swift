@@ -18,7 +18,7 @@ struct RemoteFile: Identifiable, Hashable, Sendable, Codable {
     let owner: String?
     let group: String?
 
-    init(
+    nonisolated init(
         id: UUID = UUID(),
         name: String,
         path: String,
@@ -41,39 +41,39 @@ struct RemoteFile: Identifiable, Hashable, Sendable, Codable {
     }
 
     // MARK: - Computed Properties
-    var isFile: Bool {
+    nonisolated var isFile: Bool {
         !isDirectory
     }
 
-    var displaySize: String {
+    nonisolated var displaySize: String {
         if isDirectory {
             return "--"
         }
         return ByteCountFormatter.string(fromByteCount: size, countStyle: .file)
     }
 
-    var fileExtension: String {
+    nonisolated var fileExtension: String {
         name.fileExtension.lowercased()
     }
 
-    var parentPath: String {
+    nonisolated var parentPath: String {
         path.parentPath
     }
 
-    var isHidden: Bool {
+    nonisolated var isHidden: Bool {
         name.hasPrefix(".")
     }
 
-    var isSymlink: Bool {
+    nonisolated var isSymlink: Bool {
         permissions.hasPrefix("l")
     }
 
-    var isExecutable: Bool {
+    nonisolated var isExecutable: Bool {
         permissions.contains("x")
     }
 
     // MARK: - File Type
-    var fileType: FileType {
+    nonisolated var fileType: FileType {
         if isDirectory {
             return .directory
         }
@@ -98,7 +98,7 @@ enum FileType: String, Sendable {
     case configuration
     case unknown
 
-    var iconName: String {
+    nonisolated var iconName: String {
         switch self {
         case .directory: return "folder.fill"
         case .text: return "doc.text.fill"
@@ -117,7 +117,7 @@ enum FileType: String, Sendable {
         }
     }
 
-    var isEditable: Bool {
+    nonisolated var isEditable: Bool {
         switch self {
         case .text, .code, .configuration:
             return true
@@ -126,7 +126,7 @@ enum FileType: String, Sendable {
         }
     }
 
-    static func from(extension ext: String) -> FileType {
+    nonisolated static func from(extension ext: String) -> FileType {
         switch ext {
         // Text
         case "txt", "md", "markdown", "rtf", "log":
@@ -189,7 +189,7 @@ enum FileType: String, Sendable {
 
 // MARK: - Sorting
 extension RemoteFile {
-    static func sortedFiles(_ files: [RemoteFile], by criteria: SortCriteria, ascending: Bool = true) -> [RemoteFile] {
+    nonisolated static func sortedFiles(_ files: [RemoteFile], by criteria: SortCriteria, ascending: Bool = true) -> [RemoteFile] {
         files.sorted { file1, file2 in
             // Directories always come first
             if file1.isDirectory != file2.isDirectory {

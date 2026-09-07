@@ -9,42 +9,42 @@ import Foundation
 
 extension String {
     /// Returns the string with leading and trailing whitespace removed
-    var trimmed: String {
+    nonisolated var trimmed: String {
         trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// Returns true if the string is empty or contains only whitespace
-    var isBlank: Bool {
+    nonisolated var isBlank: Bool {
         trimmed.isEmpty
     }
 
     /// Returns the file name component from a path
-    var fileName: String {
+    nonisolated var fileName: String {
         (self as NSString).lastPathComponent
     }
 
     /// Returns the directory path without the file name
-    var directoryPath: String {
+    nonisolated var directoryPath: String {
         (self as NSString).deletingLastPathComponent
     }
 
     /// Returns the file extension
-    var fileExtension: String {
+    nonisolated var fileExtension: String {
         (self as NSString).pathExtension
     }
 
     /// Returns the file name without extension
-    var fileNameWithoutExtension: String {
+    nonisolated var fileNameWithoutExtension: String {
         (self as NSString).deletingPathExtension.fileName
     }
 
     /// Appends a path component
-    func appendingPathComponent(_ component: String) -> String {
+    nonisolated func appendingPathComponent(_ component: String) -> String {
         (self as NSString).appendingPathComponent(component)
     }
 
     /// Returns the parent directory path
-    var parentPath: String {
+    nonisolated var parentPath: String {
         let components = split(separator: "/")
         if components.count <= 1 {
             return "/"
@@ -71,14 +71,14 @@ extension String {
     }
 
     /// Returns true if this path is a child of the given parent path
-    func isChildOf(_ parentPath: String) -> Bool {
+    nonisolated func isChildOf(_ parentPath: String) -> Bool {
         let normalizedSelf = self.normalizedPath
         let normalizedParent = parentPath.normalizedPath
         return normalizedSelf.hasPrefix(normalizedParent + "/")
     }
 
     /// Returns relative path from a base path
-    func relativePath(from basePath: String) -> String {
+    nonisolated func relativePath(from basePath: String) -> String {
         let normalizedSelf = self.normalizedPath
         let normalizedBase = basePath.normalizedPath
 
@@ -96,7 +96,7 @@ extension String {
 // MARK: - Path Building
 extension String {
     /// Builds an absolute path from the current directory and a relative or absolute path
-    func resolvingPath(_ path: String) -> String {
+    nonisolated func resolvingPath(_ path: String) -> String {
         if path.hasPrefix("/") {
             return path.normalizedPath
         }

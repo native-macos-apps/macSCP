@@ -11,8 +11,8 @@ import SwiftData
 final class ConnectionRepository: ConnectionRepositoryProtocol, @unchecked Sendable {
     private let dataStore: DataStore
 
-    init(dataStore: DataStore = .shared) {
-        self.dataStore = dataStore
+    init(dataStore: DataStore? = nil) {
+        self.dataStore = dataStore ?? .shared
     }
 
     @MainActor

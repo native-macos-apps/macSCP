@@ -558,9 +558,10 @@ final class FileBrowserViewModel {
                 try Task.checkCancellation()
 
                 try await self.fileRepository.download(remotePath: file.path, to: url) { [weak self] bytesTransferred in
+                    guard let self else { return }
                     Task { @MainActor in
-                        guard self?.activeTransfers[transferId] != nil else { return }
-                        self?.activeTransfers[transferId]?.bytesTransferred = bytesTransferred
+                        guard self.activeTransfers[transferId] != nil else { return }
+                        self.activeTransfers[transferId]?.bytesTransferred = bytesTransferred
                     }
                 }
 
@@ -666,10 +667,11 @@ final class FileBrowserViewModel {
                     try Task.checkCancellation()
 
                     try await self.fileRepository.upload(localURL: url, to: remotePath) { [weak self] bytesTransferred in
+                        guard let self else { return }
                         Task { @MainActor in
                             // Check if transfer was cancelled
-                            guard self?.activeTransfers[transferId] != nil else { return }
-                            self?.activeTransfers[transferId]?.bytesTransferred = bytesTransferred
+                            guard self.activeTransfers[transferId] != nil else { return }
+                            self.activeTransfers[transferId]?.bytesTransferred = bytesTransferred
                         }
                     }
 
@@ -786,9 +788,10 @@ final class FileBrowserViewModel {
 
         do {
             try await fileRepository.download(remotePath: file.path, to: destinationURL) { [weak self] bytesTransferred in
+                guard let self else { return }
                 Task { @MainActor in
-                    guard self?.activeTransfers[transferId] != nil else { return }
-                    self?.activeTransfers[transferId]?.bytesTransferred = bytesTransferred
+                    guard self.activeTransfers[transferId] != nil else { return }
+                    self.activeTransfers[transferId]?.bytesTransferred = bytesTransferred
                 }
             }
 
