@@ -8,9 +8,11 @@
 
 /* Begin PBXBuildFile section */
 		4721B3DC2F2F229B00279B18 /* TelemetryClient in Frameworks */ = {isa = PBXBuildFile; productRef = 4721B3DB2F2F229B00279B18 /* TelemetryClient */; };
-		47384BA32E96FC5200ECB4B5 /* Citadel in Frameworks */ = {isa = PBXBuildFile; productRef = 47384BA22E96FC5200ECB4B5 /* Citadel */; };
 		47AD46FB2F3E3B2E0043EA07 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 47AD46FA2F3E3B2E0043EA07 /* Sparkle */; };
+		47NIO0012F30000000000001 /* NIOCore in Frameworks */ = {isa = PBXBuildFile; productRef = 47NIO0012F30000000000000 /* NIOCore */; };
+		47NIO0022F30000000000001 /* NIOPosix in Frameworks */ = {isa = PBXBuildFile; productRef = 47NIO0022F30000000000000 /* NIOPosix */; };
 		47S3SOTO2F3000000000A1A1 /* AWSS3 in Frameworks */ = {isa = PBXBuildFile; productRef = 47S3SOTO2F3000000000A1A0 /* AWSS3 */; };
+		47SSH0012F30000000000001 /* NIOSSH in Frameworks */ = {isa = PBXBuildFile; productRef = 47SSH0012F30000000000000 /* NIOSSH */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -80,7 +82,9 @@
 			buildActionMask = 2147483647;
 			files = (
 				47AD46FB2F3E3B2E0043EA07 /* Sparkle in Frameworks */,
-				47384BA32E96FC5200ECB4B5 /* Citadel in Frameworks */,
+				47SSH0012F30000000000001 /* NIOSSH in Frameworks */,
+				47NIO0012F30000000000001 /* NIOCore in Frameworks */,
+				47NIO0022F30000000000001 /* NIOPosix in Frameworks */,
 				4721B3DC2F2F229B00279B18 /* TelemetryClient in Frameworks */,
 				47S3SOTO2F3000000000A1A1 /* AWSS3 in Frameworks */,
 			);
@@ -160,7 +164,9 @@
 			);
 			name = macSCP;
 			packageProductDependencies = (
-				47384BA22E96FC5200ECB4B5 /* Citadel */,
+				47SSH0012F30000000000000 /* NIOSSH */,
+				47NIO0012F30000000000000 /* NIOCore */,
+				47NIO0022F30000000000000 /* NIOPosix */,
 				4721B3DB2F2F229B00279B18 /* TelemetryClient */,
 				47S3SOTO2F3000000000A1A0 /* AWSS3 */,
 				47AD46FA2F3E3B2E0043EA07 /* Sparkle */,
@@ -225,7 +231,8 @@
 			mainGroup = 47384B6A2E96EB2800ECB4B5;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				47384BA12E96FC5200ECB4B5 /* XCRemoteSwiftPackageReference "Citadel" */,
+				47SSH0012F3000000000A1A2 /* XCRemoteSwiftPackageReference "swift-nio-ssh" */,
+				47NIO0012F3000000000A1A2 /* XCRemoteSwiftPackageReference "swift-nio" */,
 				4721B3DA2F2F229B00279B18 /* XCRemoteSwiftPackageReference "SwiftClient" */,
 				47S3SOTO2F3000000000A1A2 /* XCRemoteSwiftPackageReference "aws-sdk-swift" */,
 				47AD46F92F3E3B2E0043EA07 /* XCRemoteSwiftPackageReference "Sparkle" */,
@@ -678,20 +685,20 @@
 				minimumVersion = 2.11.0;
 			};
 		};
-		47384BA12E96FC5200ECB4B5 /* XCRemoteSwiftPackageReference "Citadel" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/Orlandos-nl/Citadel";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 0.11.1;
-			};
-		};
 		47AD46F92F3E3B2E0043EA07 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/sparkle-project/Sparkle";
 			requirement = {
 				kind = upToNextMajorVersion;
 				minimumVersion = 2.8.1;
+			};
+		};
+		47NIO0012F3000000000A1A2 /* XCRemoteSwiftPackageReference "swift-nio" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/apple/swift-nio.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.80.0;
 			};
 		};
 		47S3SOTO2F3000000000A1A2 /* XCRemoteSwiftPackageReference "aws-sdk-swift" */ = {
@@ -702,6 +709,14 @@
 				minimumVersion = 1.0.0;
 			};
 		};
+		47SSH0012F3000000000A1A2 /* XCRemoteSwiftPackageReference "swift-nio-ssh" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/apple/swift-nio-ssh.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.9.0;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -710,20 +725,30 @@
 			package = 4721B3DA2F2F229B00279B18 /* XCRemoteSwiftPackageReference "SwiftClient" */;
 			productName = TelemetryClient;
 		};
-		47384BA22E96FC5200ECB4B5 /* Citadel */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 47384BA12E96FC5200ECB4B5 /* XCRemoteSwiftPackageReference "Citadel" */;
-			productName = Citadel;
-		};
 		47AD46FA2F3E3B2E0043EA07 /* Sparkle */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 47AD46F92F3E3B2E0043EA07 /* XCRemoteSwiftPackageReference "Sparkle" */;
 			productName = Sparkle;
 		};
+		47NIO0012F30000000000000 /* NIOCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 47NIO0012F3000000000A1A2 /* XCRemoteSwiftPackageReference "swift-nio" */;
+			productName = NIOCore;
+		};
+		47NIO0022F30000000000000 /* NIOPosix */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 47NIO0012F3000000000A1A2 /* XCRemoteSwiftPackageReference "swift-nio" */;
+			productName = NIOPosix;
+		};
 		47S3SOTO2F3000000000A1A0 /* AWSS3 */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 47S3SOTO2F3000000000A1A2 /* XCRemoteSwiftPackageReference "aws-sdk-swift" */;
 			productName = AWSS3;
+		};
+		47SSH0012F30000000000000 /* NIOSSH */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 47SSH0012F3000000000A1A2 /* XCRemoteSwiftPackageReference "swift-nio-ssh" */;
+			productName = NIOSSH;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
