@@ -7,7 +7,6 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		4721B3DC2F2F229B00279B18 /* TelemetryClient in Frameworks */ = {isa = PBXBuildFile; productRef = 4721B3DB2F2F229B00279B18 /* TelemetryClient */; };
 		47AD46FB2F3E3B2E0043EA07 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 47AD46FA2F3E3B2E0043EA07 /* Sparkle */; };
 		47NIO0012F30000000000001 /* NIOCore in Frameworks */ = {isa = PBXBuildFile; productRef = 47NIO0012F30000000000000 /* NIOCore */; };
 		47NIO0022F30000000000001 /* NIOPosix in Frameworks */ = {isa = PBXBuildFile; productRef = 47NIO0022F30000000000000 /* NIOPosix */; };
@@ -85,7 +84,6 @@
 				47SSH0012F30000000000001 /* NIOSSH in Frameworks */,
 				47NIO0012F30000000000001 /* NIOCore in Frameworks */,
 				47NIO0022F30000000000001 /* NIOPosix in Frameworks */,
-				4721B3DC2F2F229B00279B18 /* TelemetryClient in Frameworks */,
 				47S3SOTO2F3000000000A1A1 /* AWSS3 in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -167,7 +165,6 @@
 				47SSH0012F30000000000000 /* NIOSSH */,
 				47NIO0012F30000000000000 /* NIOCore */,
 				47NIO0022F30000000000000 /* NIOPosix */,
-				4721B3DB2F2F229B00279B18 /* TelemetryClient */,
 				47S3SOTO2F3000000000A1A0 /* AWSS3 */,
 				47AD46FA2F3E3B2E0043EA07 /* Sparkle */,
 			);
@@ -233,7 +230,6 @@
 			packageReferences = (
 				47SSH0012F3000000000A1A2 /* XCRemoteSwiftPackageReference "swift-nio-ssh" */,
 				47NIO0012F3000000000A1A2 /* XCRemoteSwiftPackageReference "swift-nio" */,
-				4721B3DA2F2F229B00279B18 /* XCRemoteSwiftPackageReference "SwiftClient" */,
 				47S3SOTO2F3000000000A1A2 /* XCRemoteSwiftPackageReference "aws-sdk-swift" */,
 				47AD46F92F3E3B2E0043EA07 /* XCRemoteSwiftPackageReference "Sparkle" */,
 			);
@@ -677,14 +673,6 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
-		4721B3DA2F2F229B00279B18 /* XCRemoteSwiftPackageReference "SwiftClient" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/TelemetryDeck/SwiftClient";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 2.11.0;
-			};
-		};
 		47AD46F92F3E3B2E0043EA07 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/sparkle-project/Sparkle";
@@ -720,11 +708,6 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		4721B3DB2F2F229B00279B18 /* TelemetryClient */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 4721B3DA2F2F229B00279B18 /* XCRemoteSwiftPackageReference "SwiftClient" */;
-			productName = TelemetryClient;
-		};
 		47AD46FA2F3E3B2E0043EA07 /* Sparkle */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 47AD46F92F3E3B2E0043EA07 /* XCRemoteSwiftPackageReference "Sparkle" */;

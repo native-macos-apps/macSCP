@@ -2,11 +2,10 @@
 //  AnalyticsService.swift
 //  macSCP
 //
-//  Privacy-focused analytics using TelemetryDeck
+//  Local analytics and usage tracking
 //
 
 import Foundation
-import TelemetryClient
 
 enum AnalyticsService {
     // MARK: - Storage Keys
@@ -68,10 +67,6 @@ enum AnalyticsService {
     // MARK: - Configuration
 
     static func initialize() {
-        let config = TelemetryManagerConfiguration(appID: "FBA47B18-CCC4-4866-A7A6-FC14E247B617")
-        config.defaultUser = anonymousUserId
-        TelemetryDeck.initialize(config: config)
-
         // Increment session count
         sessionCount += 1
 
@@ -86,11 +81,11 @@ enum AnalyticsService {
     // MARK: - Core Tracking
 
     static func track(_ event: Event) {
-        TelemetryDeck.signal(event.rawValue)
+        logDebug("[Analytics] \(event.rawValue)", category: .app)
     }
 
     static func track(_ event: Event, with parameters: [String: String]) {
-        TelemetryDeck.signal(event.rawValue, parameters: parameters)
+        logDebug("[Analytics] \(event.rawValue) - parameters: \(parameters)", category: .app)
     }
 
     // MARK: - Connection Tracking

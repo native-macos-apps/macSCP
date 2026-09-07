@@ -6,7 +6,7 @@
 //
 
 import Foundation
-import Crypto
+import CryptoKit
 import NIOCore
 @preconcurrency import NIOSSH
 

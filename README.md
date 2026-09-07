@@ -252,7 +252,7 @@ macSCP takes security seriously:
 - SSH keys are never copied or stored
 - All SFTP connections use SSH protocol encryption
 - All S3 connections use HTTPS encryption
-- Privacy-focused telemetry via TelemetryDeck (no personal data collected)
+- Zero telemetry or external tracking - 100% offline & private
 - All code is open source for transparency
 
 
