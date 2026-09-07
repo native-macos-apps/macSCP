@@ -40,11 +40,10 @@ actor SSHConnection {
         let bootstrap = ClientBootstrap(group: group)
             .channelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
             .channelOption(ChannelOptions.connectTimeout, value: .seconds(15))
-            .channelInitializer { channel in
-                channel.pipeline.addHandler(sshHandler)
-            }
 
         let channel = try await bootstrap.connect(host: host, port: port).get()
+        nonisolated(unsafe) let handlerToAdd = sshHandler as (any ChannelHandler)
+        try await channel.pipeline.addHandler(handlerToAdd).get()
         self.channel = channel
 
         // Create child channel of type .session for SFTP

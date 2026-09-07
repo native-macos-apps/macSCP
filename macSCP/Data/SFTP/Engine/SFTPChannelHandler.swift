@@ -9,20 +9,20 @@ import Foundation
 import NIOCore
 @preconcurrency import NIOSSH
 
-protocol SFTPChannelHandlerDelegate: AnyObject, Sendable {
+nonisolated protocol SFTPChannelHandlerDelegate: AnyObject, Sendable {
     func sftpChannelHandler(_ handler: SFTPChannelHandler, didReceiveResponse response: SFTPResponse)
     func sftpChannelHandler(_ handler: SFTPChannelHandler, didCloseWithError error: Error?)
 }
 
-final class SFTPChannelHandler: ChannelDuplexHandler, @unchecked Sendable {
+nonisolated final class SFTPChannelHandler: ChannelDuplexHandler, @unchecked Sendable {
     typealias InboundIn = SSHChannelData
     typealias InboundOut = Never
     typealias OutboundIn = ByteBuffer
     typealias OutboundOut = SSHChannelData
 
     nonisolated(unsafe) weak var delegate: SFTPChannelHandlerDelegate?
-    private var accumulator: ByteBuffer
-    private var context: ChannelHandlerContext?
+    nonisolated(unsafe) private var accumulator: ByteBuffer
+    nonisolated(unsafe) private var context: ChannelHandlerContext?
 
     nonisolated init(allocator: ByteBufferAllocator = .init()) {
         self.accumulator = allocator.buffer(capacity: 65536)

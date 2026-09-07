@@ -8,7 +8,7 @@
 import Foundation
 import NIOCore
 
-extension ByteBuffer {
+nonisolated extension ByteBuffer {
     /// Reads an SSH-format string (UInt32 length followed by UTF-8 bytes)
     mutating func readSSHString() -> String? {
         guard let length = self.readInteger(as: UInt32.self) else {

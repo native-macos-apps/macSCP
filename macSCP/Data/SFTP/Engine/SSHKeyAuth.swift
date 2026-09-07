@@ -12,8 +12,8 @@ import NIOCore
 
 // MARK: - Key Authentication Delegate
 
-final class SSHKeyUserAuthDelegate: NIOSSHClientUserAuthenticationDelegate, @unchecked Sendable {
-    private var authOffer: NIOSSHUserAuthenticationOffer?
+nonisolated final class SSHKeyUserAuthDelegate: NIOSSHClientUserAuthenticationDelegate, @unchecked Sendable {
+    nonisolated(unsafe) private var authOffer: NIOSSHUserAuthenticationOffer?
 
     nonisolated init(username: String, privateKey: NIOSSHPrivateKey) {
         self.authOffer = NIOSSHUserAuthenticationOffer(
@@ -38,7 +38,7 @@ final class SSHKeyUserAuthDelegate: NIOSSHClientUserAuthenticationDelegate, @unc
 
 // MARK: - Server Host Key Validator (Accept All)
 
-final class AcceptAllServerAuthDelegate: NIOSSHClientServerAuthenticationDelegate, @unchecked Sendable {
+nonisolated final class AcceptAllServerAuthDelegate: NIOSSHClientServerAuthenticationDelegate, @unchecked Sendable {
     nonisolated init() {}
 
     nonisolated func validateHostKey(hostKey: NIOSSHPublicKey, validationCompletePromise: EventLoopPromise<Void>) {
@@ -46,9 +46,9 @@ final class AcceptAllServerAuthDelegate: NIOSSHClientServerAuthenticationDelegat
     }
 }
 
-// MARK: - SSH Key Parser
+// MARK: - OpenSSH Key Parser
 
-enum SSHKeyParser {
+nonisolated enum SSHKeyParser {
     enum KeyError: LocalizedError {
         case invalidKeyFormat
         case unsupportedKeyType(String)
@@ -109,7 +109,7 @@ enum SSHKeyParser {
         }
 
         guard let cipherName = buffer.readSSHString(),
-              let kdfName = buffer.readSSHString(),
+              let _ = buffer.readSSHString(), // kdfName
               let _ = buffer.readSSHBuffer(), // kdf options
               let numKeys = buffer.readInteger(as: UInt32.self),
               numKeys >= 1 else {

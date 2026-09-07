@@ -9,12 +9,12 @@ import Foundation
 import NIOCore
 @preconcurrency import NIOSSH
 
-final class SSHExecHandler: ChannelInboundHandler, @unchecked Sendable {
+nonisolated final class SSHExecHandler: ChannelInboundHandler, @unchecked Sendable {
     typealias InboundIn = SSHChannelData
 
-    private var outputBuffer = ByteBufferAllocator().buffer(capacity: 4096)
+    nonisolated(unsafe) private var outputBuffer = ByteBufferAllocator().buffer(capacity: 4096)
     let resultPromise: EventLoopPromise<String>
-    private var exitStatus: Int?
+    nonisolated(unsafe) private var exitStatus: Int?
 
     nonisolated init(eventLoop: EventLoop) {
         self.resultPromise = eventLoop.makePromise(of: String.self)

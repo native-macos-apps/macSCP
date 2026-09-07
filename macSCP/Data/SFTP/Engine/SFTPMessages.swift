@@ -10,7 +10,7 @@ import NIOCore
 
 // MARK: - Directory Name Entry
 
-struct SFTPNameEntry: Sendable {
+nonisolated struct SFTPNameEntry: Sendable {
     let filename: String
     let longname: String
     let attributes: SFTPFileAttributes
@@ -18,7 +18,7 @@ struct SFTPNameEntry: Sendable {
 
 // MARK: - SFTP Error
 
-enum SFTPClientError: LocalizedError, Sendable {
+nonisolated enum SFTPClientError: LocalizedError, Sendable {
     case connectionClosed
     case invalidPacket
     case unsupportedVersion(UInt32)
@@ -46,7 +46,7 @@ enum SFTPClientError: LocalizedError, Sendable {
 
 // MARK: - Server Response
 
-enum SFTPResponse: Sendable {
+nonisolated enum SFTPResponse: Sendable {
     case version(version: UInt32, extensions: [(String, String)])
     case status(requestId: UInt32, code: SFTPStatusCode, message: String)
     case handle(requestId: UInt32, handle: ByteBuffer)
@@ -157,7 +157,7 @@ enum SFTPResponse: Sendable {
 
 // MARK: - Outbound Request Serializer
 
-enum SFTPRequestBuilder {
+nonisolated enum SFTPRequestBuilder {
     /// Builds an SSH_FXP_INIT packet
     static func buildInit(version: UInt32 = 3, allocator: ByteBufferAllocator = .init()) -> ByteBuffer {
         var buffer = allocator.buffer(capacity: 9)

@@ -8,7 +8,7 @@
 import Foundation
 import NIOCore
 
-struct SFTPFileAttributes: Sendable {
+nonisolated struct SFTPFileAttributes: Sendable {
     var flags: SFTPAttributeFlags
     var size: UInt64?
     var uid: UInt32?
@@ -87,7 +87,7 @@ struct SFTPFileAttributes: Sendable {
 
 // MARK: - Serialization
 
-extension ByteBuffer {
+nonisolated extension ByteBuffer {
     mutating func readSFTPFileAttributes() -> SFTPFileAttributes? {
         guard let flagsRaw = self.readInteger(as: UInt32.self) else {
             return nil

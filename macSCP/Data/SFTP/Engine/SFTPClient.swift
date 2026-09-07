@@ -15,7 +15,7 @@ actor SFTPClient: SFTPChannelHandlerDelegate {
     private var initContinuation: CheckedContinuation<SFTPResponse, Error>?
     private var isClosed = false
 
-    nonisolated init(channel: Channel) {
+    init(channel: Channel) {
         self.channel = channel
     }
 
