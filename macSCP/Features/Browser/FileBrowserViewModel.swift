@@ -620,12 +620,33 @@ final class FileBrowserViewModel {
     func uploadFiles() async {
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = true
-        panel.canChooseDirectories = false
+        panel.canChooseDirectories = true
         panel.canChooseFiles = true
 
         guard panel.runModal() == .OK else { return }
 
         await uploadURLs(panel.urls)
+    }
+
+    private func calculateTransferSize(for url: URL) -> Int64 {
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) else { return 0 }
+        if !isDir.boolValue {
+            return (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int64) ?? 0
+        }
+        guard let enumerator = FileManager.default.enumerator(
+            at: url,
+            includingPropertiesForKeys: [.fileSizeKey, .isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else { return 0 }
+        var total: Int64 = 0
+        for case let fileURL as URL in enumerator {
+            if let vals = try? fileURL.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey]),
+               vals.isDirectory != true {
+                total += Int64(vals.fileSize ?? 0)
+            }
+        }
+        return total
     }
 
     /// Core upload method that handles multiple files with progress tracking
@@ -636,7 +657,7 @@ final class FileBrowserViewModel {
             guard url.isFileURL else { continue }
 
             let remotePath = currentPath.appendingPathComponent(url.lastPathComponent)
-            let fileSize = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int64) ?? 0
+            let fileSize = calculateTransferSize(for: url)
 
             // Create transfer tracking entry
             let transferId = UUID()
