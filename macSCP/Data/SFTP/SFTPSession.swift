@@ -2,20 +2,17 @@
 //  SFTPSession.swift
 //  macSCP
 //
-//  Actor-based SFTP session using Citadel
+//  Native Actor-based SFTP session using apple/swift-nio-ssh (no Citadel dependency)
 //
 
 import Foundation
-import Citadel
-import NIO
 import NIOCore
 import NIOFoundationCompat
 import NIOSSH
-import Crypto
 
 actor SFTPSession: SFTPSessionProtocol {
-    private var client: SSHClient?
-    private var eventLoopGroup: MultiThreadedEventLoopGroup?
+    private var connection: SSHConnection?
+    private var client: SFTPClient?
     private(set) var isConnected = false
     private(set) var currentPath = "/"
 
@@ -31,37 +28,28 @@ actor SFTPSession: SFTPSessionProtocol {
     ) async throws {
         logInfo("Connecting to \(username)@\(host):\(port) with password", category: .sftp)
 
-        let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-        eventLoopGroup = group
+        let normalizedHost = (host.lowercased() == "localhost") ? "127.0.0.1" : host
+        let conn = SSHConnection()
+        self.connection = conn
 
         do {
-            // Normalize localhost to 127.0.0.1 to avoid IPv6 issues
-            let normalizedHost = (host.lowercased() == "localhost") ? "127.0.0.1" : host
-
-            let authMethod: SSHAuthenticationMethod = .passwordBased(
-                username: username,
-                password: password
-            )
-
-            client = try await SSHClient.connect(
+            let userAuth = SimplePasswordDelegate(username: username, password: password)
+            let sftpClient = try await conn.connect(
                 host: normalizedHost,
                 port: port,
-                authenticationMethod: authMethod,
-                hostKeyValidator: .acceptAnything(),
-                reconnect: .never,
-                group: group
+                userAuthDelegate: userAuth
             )
 
-            isConnected = true
-
-            // Get home directory as initial path
-            currentPath = try await getRealPath(at: ".")
-
+            self.client = sftpClient
+            self.isConnected = true
+            self.currentPath = try await getRealPath(at: ".")
             logInfo("Connected successfully to \(host)", category: .sftp)
         } catch {
-            try? await group.shutdownGracefully()
-            eventLoopGroup = nil
-            throw parseConnectionError(error)
+            await conn.disconnect()
+            self.connection = nil
+            self.client = nil
+            self.isConnected = false
+            throw parseError(error)
         }
     }
 
@@ -75,29 +63,32 @@ actor SFTPSession: SFTPSessionProtocol {
     ) async throws {
         logInfo("Connecting to \(username)@\(host):\(port) with private key", category: .sftp)
 
-        let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-        eventLoopGroup = group
+        let normalizedHost = (host.lowercased() == "localhost") ? "127.0.0.1" : host
+        let conn = SSHConnection()
+        self.connection = conn
 
         do {
-            let normalizedHost = (host.lowercased() == "localhost") ? "127.0.0.1" : host
-
-            // Read the private key file
+            // Read private key file with security-scoped bookmark support
             var privateKeyURL: URL
             var isStale = false
             var accessedSecurityScope = false
 
             if let bookmarkData = bookmarkData {
-                privateKeyURL = try URL(resolvingBookmarkData: bookmarkData, options: .withSecurityScope, relativeTo: nil, bookmarkDataIsStale: &isStale)
+                privateKeyURL = try URL(
+                    resolvingBookmarkData: bookmarkData,
+                    options: .withSecurityScope,
+                    relativeTo: nil,
+                    bookmarkDataIsStale: &isStale
+                )
                 if isStale {
                     logWarning("Private key bookmark is stale for \(privateKeyURL.path)", category: .sftp)
                 }
                 accessedSecurityScope = privateKeyURL.startAccessingSecurityScopedResource()
                 if !accessedSecurityScope {
-                    throw AppError.connectionFailed("Couldn't access the saved private key. Re-select the key file in the connection settings.")
+                    throw AppError.connectionFailed("Couldn't access the saved private key. Re-select the key file in connection settings.")
                 }
             } else {
                 privateKeyURL = URL(fileURLWithPath: privateKeyPath)
-                logWarning("Private key connection is missing security-scoped bookmark data for \(privateKeyURL.path)", category: .sftp)
             }
 
             defer {
@@ -106,135 +97,87 @@ actor SFTPSession: SFTPSessionProtocol {
                 }
             }
 
-            let privateKeyData: Data
-            do {
-                privateKeyData = try Data(contentsOf: privateKeyURL)
-            } catch {
-                let nsError = error as NSError
-                let isPermissionError =
-                    nsError.domain == NSCocoaErrorDomain &&
-                    (nsError.code == NSFileReadNoPermissionError || nsError.code == NSFileReadNoSuchFileError)
-
-                if isPermissionError, bookmarkData != nil {
-                    throw AppError.connectionFailed("Couldn't access the saved private key. Re-select the key file in the connection settings.")
-                }
-
-                throw error
-            }
-            
-            // Load the private key as a string for Citadel's detection and parsing
+            let privateKeyData = try Data(contentsOf: privateKeyURL)
             let privateKeyString = String(data: privateKeyData, encoding: .utf8) ?? ""
-            let passphraseData = passphrase?.data(using: .utf8)
-            
-            // Detect the key type (RSA or ED25519)
-            let keyType = (try? SSHKeyDetection.detectPrivateKeyType(from: privateKeyString)) ?? .rsa
-            
-            let authMethod: SSHAuthenticationMethod
-            if keyType == .ed25519 {
-                // Use ED25519 with optional passphrase decryption
-                let key = try Curve25519.Signing.PrivateKey(sshEd25519: privateKeyString, decryptionKey: passphraseData)
-                authMethod = .ed25519(username: username, privateKey: key)
-            } else {
-                // Fallback to RSA with optional passphrase decryption
-                let key = try Insecure.RSA.PrivateKey(sshRsa: privateKeyString, decryptionKey: passphraseData)
-                authMethod = .rsa(username: username, privateKey: key)
-            }
 
-            client = try await SSHClient.connect(
+            let privateKey = try SSHKeyParser.parsePrivateKey(from: privateKeyString, passphrase: passphrase)
+            let userAuth = SSHKeyUserAuthDelegate(username: username, privateKey: privateKey)
+
+            let sftpClient = try await conn.connect(
                 host: normalizedHost,
                 port: port,
-                authenticationMethod: authMethod,
-                hostKeyValidator: .acceptAnything(),
-                reconnect: .never,
-                group: group
+                userAuthDelegate: userAuth
             )
 
-            isConnected = true
-            currentPath = try await getRealPath(at: ".")
-
-            logInfo("Connected successfully to \(host)", category: .sftp)
+            self.client = sftpClient
+            self.isConnected = true
+            self.currentPath = try await getRealPath(at: ".")
+            logInfo("Connected successfully to \(host) using private key", category: .sftp)
         } catch {
-            try? await group.shutdownGracefully()
-            eventLoopGroup = nil
-            throw parseConnectionError(error)
+            await conn.disconnect()
+            self.connection = nil
+            self.client = nil
+            self.isConnected = false
+            throw parseError(error)
         }
     }
 
     func disconnect() async {
         logInfo("Disconnecting from server", category: .sftp)
-
-        try? await client?.close()
-        try? await eventLoopGroup?.shutdownGracefully()
+        await client?.close()
+        await connection?.disconnect()
 
         client = nil
-        eventLoopGroup = nil
+        connection = nil
         isConnected = false
         currentPath = "/"
     }
 
-    // MARK: - File Operations
+    // MARK: - File & Directory Operations
 
     func listFiles(at path: String) async throws -> [RemoteFile] {
-        guard let client = client else {
-            throw AppError.notConnected
-        }
+        guard let client = client else { throw AppError.notConnected }
 
-        let result = try await client.withSFTP { sftp in
-            let actualPath = try await self.resolvePath(path, sftp: sftp)
-            let listing = try await sftp.listDirectory(atPath: actualPath)
+        let actualPath = try await resolvePath(path)
+        let entries = try await client.listDirectory(at: actualPath)
 
-            var files: [RemoteFile] = []
+        var files: [RemoteFile] = []
+        for entry in entries {
+            let isDirectory = entry.attributes.isDirectory
+            var fullPath = actualPath.hasSuffix("/")
+                ? "\(actualPath)\(entry.filename)"
+                : "\(actualPath)/\(entry.filename)"
 
-            for nameResponse in listing {
-                for component in nameResponse.components {
-                    guard component.filename != ".", component.filename != ".." else { continue }
-
-                    let isDirectory = Self.isDirectoryFromPermissions(component.attributes.permissions)
-                    var fullPath = actualPath.hasSuffix("/")
-                        ? "\(actualPath)\(component.filename)"
-                        : "\(actualPath)/\(component.filename)"
-                    
-                    if isDirectory && !fullPath.hasSuffix("/") {
-                        fullPath += "/"
-                    }
-
-                    let size = Int64(component.attributes.size ?? 0)
-                    let permissions = Self.formatPermissions(component.attributes)
-                    let modDate = component.attributes.accessModificationTime?.modificationTime
-
-                    let file = RemoteFile(
-                        name: component.filename,
-                        path: fullPath,
-                        isDirectory: isDirectory,
-                        size: size,
-                        permissions: permissions,
-                        modificationDate: modDate
-                    )
-
-                    files.append(file)
-                }
+            if isDirectory && !fullPath.hasSuffix("/") {
+                fullPath += "/"
             }
 
-            return (actualPath, files)
+            let size = Int64(entry.attributes.size ?? 0)
+            let permissions = entry.attributes.formatPermissions()
+            let modDate = entry.attributes.modificationTime
+
+            files.append(RemoteFile(
+                name: entry.filename,
+                path: fullPath,
+                isDirectory: isDirectory,
+                size: size,
+                permissions: permissions,
+                modificationDate: modDate
+            ))
         }
 
-        currentPath = result.0
-        return RemoteFile.sortedFiles(result.1, by: .name)
+        currentPath = actualPath
+        return RemoteFile.sortedFiles(files, by: .name)
     }
 
     func getFileInfo(at path: String) async throws -> RemoteFile {
-        guard let client = client else {
-            throw AppError.notConnected
-        }
+        guard let client = client else { throw AppError.notConnected }
 
-        let attributes = try await client.withSFTP { sftp in
-            try await sftp.getAttributes(at: path)
-        }
-
-        let isDirectory = Self.isDirectoryFromPermissions(attributes.permissions)
-        let size = Int64(attributes.size ?? 0)
-        let permissions = Self.formatPermissions(attributes)
-        let modDate = attributes.accessModificationTime?.modificationTime
+        let attrs = try await client.stat(at: path)
+        let isDirectory = attrs.isDirectory
+        let size = Int64(attrs.size ?? 0)
+        let permissions = attrs.formatPermissions()
+        let modDate = attrs.modificationTime
         let fileName = (path as NSString).lastPathComponent
 
         return RemoteFile(
@@ -248,200 +191,107 @@ actor SFTPSession: SFTPSessionProtocol {
     }
 
     func createDirectory(at path: String) async throws {
-        guard let client = client else {
-            throw AppError.notConnected
-        }
-
+        guard let client = client else { throw AppError.notConnected }
         do {
-            try await client.withSFTP { sftp in
-                try await sftp.createDirectory(atPath: path)
-            }
+            try await client.createDirectory(at: path)
             logInfo("Created directory: \(path)", category: .sftp)
         } catch {
-            throw parseSFTPError(error, operation: "create directory")
+            throw parseError(error)
         }
     }
 
     func createFile(at path: String) async throws {
-        guard let client = client else {
-            throw AppError.notConnected
-        }
-
+        guard let client = client else { throw AppError.notConnected }
         do {
-            try await client.withSFTP { sftp in
-                try await sftp.withFile(filePath: path, flags: [.write, .create, .truncate]) { _ in }
-            }
-            logInfo("Created file: \(path)", category: .sftp)
+            let handle = try await client.openFile(path: path, flags: [.write, .creat, .trunc])
+            try await client.closeHandle(handle)
+            logInfo("Created empty file: \(path)", category: .sftp)
         } catch {
-            throw parseSFTPError(error, operation: "create file")
+            throw parseError(error)
         }
     }
 
     func deleteFile(at path: String) async throws {
-        guard let client = client else {
-            throw AppError.notConnected
-        }
-
+        guard let client = client else { throw AppError.notConnected }
         do {
-            try await client.withSFTP { sftp in
-                try await sftp.remove(at: path)
-            }
+            try await client.removeFile(at: path)
             logInfo("Deleted file: \(path)", category: .sftp)
         } catch {
-            throw parseSFTPError(error, operation: "delete file")
+            throw parseError(error)
         }
     }
 
+    /// Pure native SFTP recursive delete without requiring remote shell access
     func deleteDirectory(at path: String) async throws {
-        guard let client = client else {
-            throw AppError.notConnected
-        }
-
+        guard let client = client else { throw AppError.notConnected }
         do {
-            // Use rm -rf for recursive deletion
-            let result = try await client.executeCommand("rm -rf '\(path)'")
-            let output = String(buffer: result).trimmingCharacters(in: .whitespacesAndNewlines)
-
-            if !output.isEmpty && output.lowercased().contains("permission denied") {
-                throw AppError.permissionDenied
-            }
-
-            logInfo("Deleted directory: \(path)", category: .sftp)
-        } catch let error as AppError {
-            throw error
+            try await client.removeDirectoryRecursive(at: path)
+            logInfo("Recursively deleted directory: \(path)", category: .sftp)
         } catch {
-            throw parseSFTPError(error, operation: "delete directory")
+            throw parseError(error)
         }
     }
 
     func rename(from sourcePath: String, to destinationPath: String) async throws {
-        guard let client = client else {
-            throw AppError.notConnected
-        }
-
+        guard let client = client else { throw AppError.notConnected }
         do {
-            try await client.withSFTP { sftp in
-                try await sftp.rename(at: sourcePath, to: destinationPath)
-            }
+            try await client.rename(from: sourcePath, to: destinationPath)
             logInfo("Renamed \(sourcePath) to \(destinationPath)", category: .sftp)
         } catch {
-            throw parseSFTPError(error, operation: "rename")
-        }
-    }
-
-    func copyFile(from sourcePath: String, to destinationPath: String) async throws {
-        guard let client = client else {
-            throw AppError.notConnected
-        }
-
-        do {
-            let result = try await client.executeCommand("cp '\(sourcePath)' '\(destinationPath)'")
-            let output = String(buffer: result).trimmingCharacters(in: .whitespacesAndNewlines)
-
-            if !output.isEmpty && output.lowercased().contains("permission denied") {
-                throw AppError.permissionDenied
-            }
-
-            logInfo("Copied file: \(sourcePath) to \(destinationPath)", category: .sftp)
-        } catch let error as AppError {
-            throw error
-        } catch {
-            throw parseSFTPError(error, operation: "copy file")
-        }
-    }
-
-    func copyDirectory(from sourcePath: String, to destinationPath: String) async throws {
-        guard let client = client else {
-            throw AppError.notConnected
-        }
-
-        do {
-            let result = try await client.executeCommand("cp -r '\(sourcePath)' '\(destinationPath)'")
-            let output = String(buffer: result).trimmingCharacters(in: .whitespacesAndNewlines)
-
-            if !output.isEmpty && output.lowercased().contains("permission denied") {
-                throw AppError.permissionDenied
-            }
-
-            logInfo("Copied directory: \(sourcePath) to \(destinationPath)", category: .sftp)
-        } catch let error as AppError {
-            throw error
-        } catch {
-            throw parseSFTPError(error, operation: "copy directory")
+            throw parseError(error)
         }
     }
 
     func move(from sourcePath: String, to destinationPath: String) async throws {
-        guard let client = client else {
-            throw AppError.notConnected
-        }
+        try await rename(from: sourcePath, to: destinationPath)
+    }
 
+    func copyFile(from sourcePath: String, to destinationPath: String) async throws {
+        guard let connection = connection else { throw AppError.notConnected }
+        // Fast server-side copy via shell if available
         do {
-            let result = try await client.executeCommand("mv '\(sourcePath)' '\(destinationPath)'")
-            let output = String(buffer: result).trimmingCharacters(in: .whitespacesAndNewlines)
-
-            if !output.isEmpty && output.lowercased().contains("permission denied") {
+            let result = try await connection.executeCommand("cp '\(sourcePath)' '\(destinationPath)'")
+            if result.lowercased().contains("permission denied") {
                 throw AppError.permissionDenied
             }
-
-            logInfo("Moved: \(sourcePath) to \(destinationPath)", category: .sftp)
-        } catch let error as AppError {
-            throw error
+            logInfo("Copied file: \(sourcePath) to \(destinationPath)", category: .sftp)
         } catch {
-            throw parseSFTPError(error, operation: "move")
+            throw parseError(error)
         }
     }
+
+    func copyDirectory(from sourcePath: String, to destinationPath: String) async throws {
+        guard let connection = connection else { throw AppError.notConnected }
+        do {
+            let result = try await connection.executeCommand("cp -r '\(sourcePath)' '\(destinationPath)'")
+            if result.lowercased().contains("permission denied") {
+                throw AppError.permissionDenied
+            }
+            logInfo("Copied directory: \(sourcePath) to \(destinationPath)", category: .sftp)
+        } catch {
+            throw parseError(error)
+        }
+    }
+
+    // MARK: - High-Performance Pipelined Transfers
 
     func downloadFile(from remotePath: String, to localURL: URL) async throws {
         try await downloadFile(from: remotePath, to: localURL, progress: nil)
     }
 
     func downloadFile(from remotePath: String, to localURL: URL, progress: TransferProgressHandler?) async throws {
-        guard let client = client else {
-            throw AppError.notConnected
-        }
+        guard let client = client else { throw AppError.notConnected }
 
         do {
-            try await client.withSFTP { sftp in
-                // Get file size first
-                let attributes = try await sftp.getAttributes(at: remotePath)
-                let fileSize = attributes.size ?? 0
-                let chunkSize = UInt64(FileOperationConstants.chunkSize)
-
-                // Report initial progress
-                progress?(0)
-
-                try await sftp.withFile(filePath: remotePath, flags: .read) { file in
-                    // Create/truncate local file
-                    FileManager.default.createFile(atPath: localURL.path, contents: nil)
-                    let fileHandle = try FileHandle(forWritingTo: localURL)
-                    defer { try? fileHandle.close() }
-
-                    var offset: UInt64 = 0
-
-                    while offset < fileSize {
-                        try Task.checkCancellation()
-
-                        let bytesToRead = min(chunkSize, fileSize - offset)
-                        let buffer = try await file.read(from: offset, length: UInt32(bytesToRead))
-                        let data = Data(buffer: buffer)
-
-                        try fileHandle.write(contentsOf: data)
-                        offset += UInt64(data.count)
-
-                        // Report progress
-                        progress?(Int64(offset))
-
-                        // Break if we didn't get any data (EOF)
-                        if data.isEmpty {
-                            break
-                        }
-                    }
-                }
-            }
-            logInfo("Downloaded: \(remotePath) to \(localURL.path)", category: .sftp)
+            try await SFTPTransferEngine.download(
+                client: client,
+                remotePath: remotePath,
+                localURL: localURL,
+                progress: progress
+            )
+            logInfo("Pipelined download completed: \(remotePath) -> \(localURL.path)", category: .sftp)
         } catch {
-            throw parseSFTPError(error, operation: "download")
+            throw parseError(error)
         }
     }
 
@@ -450,106 +300,80 @@ actor SFTPSession: SFTPSessionProtocol {
     }
 
     func uploadFile(from localURL: URL, to remotePath: String, progress: TransferProgressHandler?) async throws {
-        guard let client = client else {
-            throw AppError.notConnected
-        }
+        guard let client = client else { throw AppError.notConnected }
 
         do {
-            // Use FileHandle for streaming reads instead of loading entire file into memory
-            let fileHandle = try FileHandle(forReadingFrom: localURL)
-            defer { try? fileHandle.close() }
-
-            let fileSize = try FileManager.default.attributesOfItem(atPath: localURL.path)[.size] as? UInt64 ?? 0
-            let chunkSize = FileOperationConstants.chunkSize
-
-            // Report initial progress
-            progress?(0)
-
-            try await client.withSFTP { sftp in
-                // Remove existing file if present
-                try? await sftp.remove(at: remotePath)
-
-                try await sftp.withFile(filePath: remotePath, flags: [.write, .create, .truncate]) { file in
-                    var offset: UInt64 = 0
-
-                    while offset < fileSize {
-                        // Read chunk from file handle
-                        try fileHandle.seek(toOffset: offset)
-                        guard let chunkData = try fileHandle.read(upToCount: chunkSize), !chunkData.isEmpty else {
-                            break
-                        }
-
-                        // Write chunk at current offset
-                        try await file.write(ByteBuffer(data: chunkData), at: offset)
-                        offset += UInt64(chunkData.count)
-
-                        // Report progress
-                        progress?(Int64(offset))
-                    }
-                }
-            }
-            logInfo("Uploaded: \(localURL.path) to \(remotePath)", category: .sftp)
+            try await SFTPTransferEngine.upload(
+                client: client,
+                localURL: localURL,
+                remotePath: remotePath,
+                progress: progress
+            )
+            logInfo("Pipelined upload completed: \(localURL.path) -> \(remotePath)", category: .sftp)
         } catch {
-            throw parseSFTPError(error, operation: "upload")
+            throw parseError(error)
         }
     }
 
     func readFileContent(at path: String) async throws -> String {
-        guard let client = client else {
-            throw AppError.notConnected
-        }
+        guard let client = client else { throw AppError.notConnected }
 
-        return try await client.withSFTP { sftp in
-            try await sftp.withFile(filePath: path, flags: .read) { file in
-                let buffer = try await file.readAll()
-                return String(buffer: buffer)
+        let handle = try await client.openFile(path: path, flags: [.read])
+        defer {
+            Task {
+                try? await client.closeHandle(handle)
             }
         }
+
+        var offset: UInt64 = 0
+        var allData = Data()
+        let chunkSize: UInt32 = 64 * 1024
+
+        while let chunk = try await client.read(handle: handle, offset: offset, length: chunkSize) {
+            let data = Data(buffer: chunk)
+            if data.isEmpty { break }
+            allData.append(data)
+            offset += UInt64(data.count)
+        }
+
+        return String(data: allData, encoding: .utf8) ?? ""
     }
 
     func writeFileContent(_ content: String, to path: String) async throws {
-        guard let client = client else {
-            throw AppError.notConnected
-        }
+        guard let client = client else { throw AppError.notConnected }
 
-        do {
-            try await client.withSFTP { sftp in
-                try? await sftp.remove(at: path)
-
-                try await sftp.withFile(filePath: path, flags: [.write, .create, .truncate]) { file in
-                    try await file.write(ByteBuffer(string: content))
-                }
+        let handle = try await client.openFile(path: path, flags: [.write, .creat, .trunc])
+        defer {
+            Task {
+                try? await client.closeHandle(handle)
             }
-            logInfo("Wrote content to: \(path)", category: .sftp)
-        } catch {
-            throw parseSFTPError(error, operation: "write file")
         }
+
+        let contentData = content.data(using: .utf8) ?? Data()
+        var buffer = ByteBufferAllocator().buffer(capacity: contentData.count)
+        buffer.writeBytes(contentData)
+
+        try await client.write(handle: handle, offset: 0, data: buffer)
+        logInfo("Wrote content to: \(path)", category: .sftp)
     }
 
     func getRealPath(at path: String) async throws -> String {
-        guard let client = client else {
-            throw AppError.notConnected
-        }
-
-        return try await client.withSFTP { sftp in
-            try await sftp.getRealPath(atPath: path)
-        }
+        guard let client = client else { throw AppError.notConnected }
+        return try await client.realPath(at: path)
     }
 
     func executeCommand(_ command: String) async throws -> String {
-        guard let client = client else {
-            throw AppError.notConnected
-        }
-
-        let result = try await client.executeCommand(command)
-        return String(buffer: result)
+        guard let connection = connection else { throw AppError.notConnected }
+        return try await connection.executeCommand(command)
     }
 
     // MARK: - Private Helpers
 
-    private func resolvePath(_ path: String, sftp: SFTPClient) async throws -> String {
+    private func resolvePath(_ path: String) async throws -> String {
+        guard let client = client else { throw AppError.notConnected }
+
         if path == "~" || path == "." {
-            return try await sftp.getRealPath(atPath: ".")
+            return try await client.realPath(at: ".")
         } else if path == ".." {
             let components = currentPath.split(separator: "/")
             if components.count > 1 {
@@ -563,76 +387,42 @@ actor SFTPSession: SFTPSessionProtocol {
         }
     }
 
-    private nonisolated static func isDirectoryFromPermissions(_ permissions: UInt32?) -> Bool {
-        guard let permissions = permissions else { return false }
-        return (permissions & 0o170000) == 0o040000
-    }
-
-    private nonisolated static func formatPermissions(_ attributes: SFTPFileAttributes) -> String {
-        guard let permissions = attributes.permissions else {
-            return "----------"
+    private func parseError(_ error: Error) -> AppError {
+        if let appError = error as? AppError {
+            return appError
         }
 
-        var result = ""
-
-        let fileType = permissions & 0o170000
-        switch fileType {
-        case 0o040000: result += "d"
-        case 0o120000: result += "l"
-        case 0o100000: result += "-"
-        case 0o060000: result += "b"
-        case 0o020000: result += "c"
-        case 0o010000: result += "p"
-        case 0o140000: result += "s"
-        default: result += "-"
+        if let sftpError = error as? SFTPClientError {
+            switch sftpError {
+            case .connectionClosed:
+                return .connectionLost
+            case .failure(let code, let msg):
+                switch code {
+                case .noSuchFile:
+                    return .fileNotFound
+                case .permissionDenied:
+                    return .permissionDenied
+                case .connectionLost, .noConnection:
+                    return .connectionLost
+                default:
+                    return .sftpOperationFailed(msg.isEmpty ? "SFTP operation failed" : msg)
+                }
+            default:
+                return .sftpOperationFailed(sftpError.localizedDescription)
+            }
         }
 
-        result += (permissions & 0o400) != 0 ? "r" : "-"
-        result += (permissions & 0o200) != 0 ? "w" : "-"
-        result += (permissions & 0o100) != 0 ? "x" : "-"
-        result += (permissions & 0o040) != 0 ? "r" : "-"
-        result += (permissions & 0o020) != 0 ? "w" : "-"
-        result += (permissions & 0o010) != 0 ? "x" : "-"
-        result += (permissions & 0o004) != 0 ? "r" : "-"
-        result += (permissions & 0o002) != 0 ? "w" : "-"
-        result += (permissions & 0o001) != 0 ? "x" : "-"
-
-        return result
-    }
-
-    private func parseConnectionError(_ error: Error) -> AppError {
         let description = error.localizedDescription.lowercased()
-
         if description.contains("connection refused") {
             return .connectionFailed("Connection refused. Make sure the SSH server is running.")
         } else if description.contains("host unreachable") || description.contains("no route to host") {
             return .hostUnreachable
         } else if description.contains("timeout") {
             return .connectionTimeout
-        } else if description.contains("authentication") || description.contains("password") || description.contains("permission denied") {
+        } else if description.contains("authentication") || description.contains("permission denied") {
             return .authenticationFailed
-        } else if description.contains("operation not permitted") {
-            return .connectionFailed("Operation not permitted. Check firewall settings.")
         }
 
         return .connectionFailed(error.localizedDescription)
-    }
-
-    private func parseSFTPError(_ error: Error, operation: String) -> AppError {
-        let errorString = String(describing: error)
-
-        if errorString.contains("SSH_FX_PERMISSION_DENIED") || errorString.contains("Permission denied") {
-            return .permissionDenied
-        } else if errorString.contains("SSH_FX_NO_SUCH_FILE") || errorString.contains("No such file") {
-            return .fileNotFound
-        } else if errorString.contains("SSH_FX_FILE_ALREADY_EXISTS") {
-            return .fileAlreadyExists
-        } else if errorString.contains("SSH_FX_FAILURE") {
-            return .sftpOperationFailed("Operation failed on the server")
-        } else if errorString.contains("SSH_FX_NO_CONNECTION") {
-            return .connectionLost
-        }
-
-        return .sftpOperationFailed("Failed to \(operation): \(error.localizedDescription)")
     }
 }

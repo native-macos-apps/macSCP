@@ -114,7 +114,7 @@ macSCP is a modern, native macOS application built with SwiftUI that provides se
 
 ### 🛠️ **Developer-Friendly**
 - **SwiftData Persistence**: Modern data persistence using SwiftData
-- **Citadel SFTP**: Built on the robust Citadel SSH/SFTP library
+- **High-Performance Native SFTP**: Built-in pipelined SFTP engine based on Apple's `swift-nio-ssh`
 - **NIO Foundation**: Leverages SwiftNIO for high-performance networking
 - **Combine Framework**: Reactive programming for smooth UI updates
 
@@ -154,7 +154,7 @@ macSCP is a modern, native macOS application built with SwiftUI that provides se
 ### Dependencies
 
 macSCP uses Swift Package Manager for dependency management. Required packages:
-- [Citadel](https://github.com/Orlandos-nl/Citadel) - SSH/SFTP implementation
+- [swift-nio-ssh](https://github.com/apple/swift-nio-ssh) - Apple's official SSHv2 implementation
 - [AWS SDK for Swift](https://github.com/awslabs/aws-sdk-swift) - AWS SDK for Swift (S3 support)
 - [SwiftNIO](https://github.com/apple/swift-nio) - High-performance networking
 
@@ -202,7 +202,7 @@ macSCP is built with modern Swift and SwiftUI patterns:
 - **SwiftUI**: Entire UI built with declarative SwiftUI
 - **SwiftData**: Model persistence and data management
 - **Combine**: Reactive state management
-- **Citadel**: SSH/SFTP protocol implementation
+- **Native SFTP Engine**: High-performance pipelined SFTP based on Apple's `swift-nio-ssh`
 - **AWS SDK for Swift**: AWS S3 protocol implementation
 - **SwiftNIO**: Non-blocking I/O for network operations
 - **MVVM Pattern**: Clean separation of concerns
@@ -299,9 +299,8 @@ This project is licensed under CC0 1.0 Universal - see the [LICENSE](LICENSE) fi
 
 ## Acknowledgments
 
-- Built with [Citadel](https://github.com/Orlandos-nl/Citadel) by Joannis Orlandos
+- Uses [swift-nio-ssh](https://github.com/apple/swift-nio-ssh) & [SwiftNIO](https://github.com/apple/swift-nio) by Apple
 - S3 support powered by [AWS SDK for Swift](https://github.com/awslabs/aws-sdk-swift)
-- Uses [SwiftNIO](https://github.com/apple/swift-nio) by Apple
 - Icons from SF Symbols by Apple
 - Inspired by classic SCP clients and modern macOS design
 
