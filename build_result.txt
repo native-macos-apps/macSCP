@@ -1,4 +1,0 @@
-2026-05-16 03:37:59.192 xcodebuild[17881:227830] [MT] IDERunDestination: Supported platforms for the buildables in the current scheme is empty.
---- xcodebuild: WARNING: Using the first of multiple matching destinations:
-{ platform:macOS, arch:arm64, id:00006000-001238A93E91801E, name:My Mac }
-{ platform:macOS, arch:x86_64, id:00006000-001238A93E91801E, name:My Mac }
