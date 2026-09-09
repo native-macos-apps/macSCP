@@ -14,6 +14,7 @@ struct ConnectionRowView: View {
         switch connection.connectionType {
         case .sftp: return .blue
         case .s3:   return .orange
+        case .local: return .green
         }
     }
 

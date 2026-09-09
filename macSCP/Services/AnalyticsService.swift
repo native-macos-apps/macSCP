@@ -250,11 +250,13 @@ enum AnalyticsService {
     enum ConnectionProtocol: String {
         case sftp = "sftp"
         case s3 = "s3"
+        case local = "local"
 
         init(from connectionType: ConnectionType) {
             switch connectionType {
             case .sftp: self = .sftp
             case .s3: self = .s3
+            case .local: self = .local
             }
         }
     }

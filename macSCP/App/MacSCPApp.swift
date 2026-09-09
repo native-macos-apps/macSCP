@@ -32,13 +32,13 @@ struct MacSCPApp: App {
     }
 
     var body: some Scene {
-        // Main Window - Connection List
+        // Main Window - Dual-Pane Commander View (Transmit 5 style)
         WindowGroup {
-            ConnectionListView(viewModel: container.makeConnectionListViewModel())
+            CommanderWorkspaceView(container: container)
                 .appLockOverlay()
         }
         .modelContainer(container.modelContainer)
-        .defaultSize(WindowSize.main)
+        .defaultSize(WindowSize.commander)
         .commands {
             appCommands
         }

@@ -110,6 +110,19 @@ final class DependencyContainer: ObservableObject {
         )
     }
 
+    func makeLocalFileRepository() -> FileRepositoryProtocol {
+        LocalFileRepository()
+    }
+
+    func makeLocalFileBrowserViewModel(initialPath: String? = nil) -> FileBrowserViewModel {
+        let localRepo = makeLocalFileRepository()
+        return FileBrowserViewModel(
+            localRepository: localRepo,
+            clipboardService: clipboardService,
+            initialPath: initialPath
+        )
+    }
+
     func makeFileEditorViewModel(
         filePath: String,
         fileName: String,

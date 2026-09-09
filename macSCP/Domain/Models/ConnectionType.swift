@@ -10,6 +10,11 @@ import Foundation
 enum ConnectionType: String, Codable, Sendable, CaseIterable {
     case sftp
     case s3
+    case local
+
+    static var creatableCases: [ConnectionType] {
+        [.sftp, .s3]
+    }
 
     var displayName: String {
         switch self {
@@ -17,6 +22,8 @@ enum ConnectionType: String, Codable, Sendable, CaseIterable {
             return "SFTP"
         case .s3:
             return "S3"
+        case .local:
+            return "Local"
         }
     }
 
@@ -26,6 +33,8 @@ enum ConnectionType: String, Codable, Sendable, CaseIterable {
             return "server.rack"
         case .s3:
             return "externaldrive.connected.to.line.below"
+        case .local:
+            return "laptopcomputer"
         }
     }
 
@@ -35,6 +44,8 @@ enum ConnectionType: String, Codable, Sendable, CaseIterable {
             return "Secure File Transfer Protocol"
         case .s3:
             return "Amazon S3 / S3-Compatible Storage"
+        case .local:
+            return "Local macOS Filesystem"
         }
     }
 }

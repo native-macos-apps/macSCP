@@ -104,6 +104,12 @@ final class FileBrowserViewModel {
     private let clipboardService: ClipboardService
     private let navigationService = NavigationService()
 
+    // MARK: - Computed Properties
+
+    var isLocal: Bool {
+        connection.connectionType == .local
+    }
+
     // MARK: - Initialization (SFTP)
     init(
         connection: Connection,
@@ -134,6 +140,29 @@ final class FileBrowserViewModel {
         self.fileRepository = fileRepository
         self.clipboardService = clipboardService
         self.password = secretAccessKey
+    }
+
+    // MARK: - Initialization (Local)
+    init(
+        localRepository: FileRepositoryProtocol,
+        clipboardService: ClipboardService,
+        initialPath: String? = nil
+    ) {
+        let homeDir = FileManager.default.homeDirectoryForCurrentUser.path
+        let startingPath = initialPath ?? homeDir
+        self.connection = Connection(
+            id: UUID(),
+            name: "Mac",
+            host: "localhost",
+            username: NSUserName(),
+            connectionType: .local
+        )
+        self.sftpSession = nil
+        self.s3Session = nil
+        self.fileRepository = localRepository
+        self.clipboardService = clipboardService
+        self.password = ""
+        self.currentPath = startingPath
     }
 
     // MARK: - Computed Properties
@@ -207,6 +236,17 @@ final class FileBrowserViewModel {
     func connect() async {
         state = .loading
 
+        if isLocal {
+            isConnected = true
+            if currentPath.isEmpty || currentPath == "/" {
+                currentPath = FileManager.default.homeDirectoryForCurrentUser.path
+            }
+            navigationService.reset(to: currentPath)
+            AnalyticsService.trackFileBrowserOpened(protocol: .local)
+            await loadFiles()
+            return
+        }
+
         do {
             if connection.connectionType == .s3 {
                 // S3 connection
@@ -260,6 +300,12 @@ final class FileBrowserViewModel {
     }
 
     func disconnect() async {
+        if isLocal {
+            isConnected = false
+            files = []
+            navigationService.reset()
+            return
+        }
         if connection.connectionType == .s3 {
             await s3Session?.disconnect()
         } else {
@@ -278,10 +324,12 @@ final class FileBrowserViewModel {
 
         do {
             files = try await fileRepository.listFiles(at: currentPath)
-            if connection.connectionType == .s3 {
-                currentPath = await s3Session?.currentPath ?? "/"
-            } else {
-                currentPath = await sftpSession?.currentPath ?? "/"
+            if !isLocal {
+                if connection.connectionType == .s3 {
+                    currentPath = await s3Session?.currentPath ?? "/"
+                } else {
+                    currentPath = await sftpSession?.currentPath ?? "/"
+                }
             }
             state = .success(())
         } catch {
@@ -305,7 +353,9 @@ final class FileBrowserViewModel {
             let newFiles = try await fileRepository.listFiles(at: path)
             
             let newPath: String
-            if connection.connectionType == .s3 {
+            if isLocal {
+                newPath = (path as NSString).expandingTildeInPath
+            } else if connection.connectionType == .s3 {
                 newPath = await s3Session?.currentPath ?? "/"
             } else {
                 newPath = await sftpSession?.currentPath ?? "/"
@@ -354,7 +404,11 @@ final class FileBrowserViewModel {
     }
 
     func goHome() async {
-        await navigateTo("~")
+        if isLocal {
+            await navigateTo(FileManager.default.homeDirectoryForCurrentUser.path)
+        } else {
+            await navigateTo("~")
+        }
     }
 
     func refresh() async {
@@ -366,7 +420,9 @@ final class FileBrowserViewModel {
 
         do {
             files = try await fileRepository.listFiles(at: path)
-            if connection.connectionType == .s3 {
+            if isLocal {
+                currentPath = (path as NSString).expandingTildeInPath
+            } else if connection.connectionType == .s3 {
                 currentPath = await s3Session?.currentPath ?? "/"
             } else {
                 currentPath = await sftpSession?.currentPath ?? "/"

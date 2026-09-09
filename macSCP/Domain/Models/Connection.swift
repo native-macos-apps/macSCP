@@ -97,6 +97,8 @@ struct Connection: Identifiable, Hashable, Sendable, Codable, Transferable {
                 return bucket
             }
             return "S3"
+        case .local:
+            return "localhost"
         }
     }
 
@@ -109,6 +111,8 @@ struct Connection: Identifiable, Hashable, Sendable, Codable, Transferable {
                 return "s3://\(bucket)"
             }
             return "S3"
+        case .local:
+            return "local://localhost"
         }
     }
 
@@ -136,6 +140,8 @@ extension Connection {
             return isSFTPValid
         case .s3:
             return isS3Valid
+        case .local:
+            return true
         }
     }
 
@@ -158,6 +164,8 @@ extension Connection {
             return sftpValidationErrors
         case .s3:
             return s3ValidationErrors
+        case .local:
+            return []
         }
     }
 
