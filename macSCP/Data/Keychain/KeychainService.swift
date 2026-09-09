@@ -33,7 +33,7 @@ final class KeychainService: KeychainServiceProtocol, @unchecked Sendable {
         ]
 
         // Add access group for consistent access across app launches
-        #if !targetEnvironment(simulator)
+        #if !targetEnvironment(simulator) && !LOCAL_BUILD
         query[kSecAttrAccessGroup as String] = "com.macSCP.keychain"
         #endif
 
@@ -56,7 +56,7 @@ final class KeychainService: KeychainServiceProtocol, @unchecked Sendable {
             kSecMatchLimit as String: kSecMatchLimitOne
         ]
 
-        #if !targetEnvironment(simulator)
+        #if !targetEnvironment(simulator) && !LOCAL_BUILD
         query[kSecAttrAccessGroup as String] = "com.macSCP.keychain"
         #endif
 
@@ -79,7 +79,7 @@ final class KeychainService: KeychainServiceProtocol, @unchecked Sendable {
             kSecAttrAccount as String: connectionId.uuidString
         ]
 
-        #if !targetEnvironment(simulator)
+        #if !targetEnvironment(simulator) && !LOCAL_BUILD
         query[kSecAttrAccessGroup as String] = "com.macSCP.keychain"
         #endif
 
@@ -104,7 +104,7 @@ final class KeychainService: KeychainServiceProtocol, @unchecked Sendable {
             kSecAttrAccount as String: connectionId.uuidString
         ]
 
-        #if !targetEnvironment(simulator)
+        #if !targetEnvironment(simulator) && !LOCAL_BUILD
         query[kSecAttrAccessGroup as String] = "com.macSCP.keychain"
         #endif
 
@@ -150,7 +150,7 @@ final class KeychainService: KeychainServiceProtocol, @unchecked Sendable {
             kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlocked
         ]
 
-        #if !targetEnvironment(simulator)
+        #if !targetEnvironment(simulator) && !LOCAL_BUILD
         query[kSecAttrAccessGroup as String] = "com.macSCP.keychain"
         #endif
 
@@ -173,7 +173,7 @@ final class KeychainService: KeychainServiceProtocol, @unchecked Sendable {
             kSecMatchLimit as String: kSecMatchLimitOne
         ]
 
-        #if !targetEnvironment(simulator)
+        #if !targetEnvironment(simulator) && !LOCAL_BUILD
         query[kSecAttrAccessGroup as String] = "com.macSCP.keychain"
         #endif
 
@@ -196,7 +196,7 @@ final class KeychainService: KeychainServiceProtocol, @unchecked Sendable {
             kSecAttrAccount as String: connectionId.uuidString
         ]
 
-        #if !targetEnvironment(simulator)
+        #if !targetEnvironment(simulator) && !LOCAL_BUILD
         query[kSecAttrAccessGroup as String] = "com.macSCP.keychain"
         #endif
 
@@ -221,7 +221,7 @@ final class KeychainService: KeychainServiceProtocol, @unchecked Sendable {
             kSecAttrAccount as String: connectionId.uuidString
         ]
 
-        #if !targetEnvironment(simulator)
+        #if !targetEnvironment(simulator) && !LOCAL_BUILD
         query[kSecAttrAccessGroup as String] = "com.macSCP.keychain"
         #endif
 
