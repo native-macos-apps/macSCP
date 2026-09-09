@@ -143,6 +143,8 @@ struct ConnectionFormSheet: View {
                                     browseForKey()
                                 }
                             }
+                            SecureField("Passphrase (optional)", text: $password)
+                            Toggle("Save passphrase in Keychain", isOn: $savePassword)
                         }
                     }
                 } else if selectedType == .s3 {

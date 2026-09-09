@@ -373,14 +373,14 @@ final class ConnectionListViewModel {
 
     // MARK: - Terminal Operations
 
-    func openTerminal(for connection: Connection, password: String) {
+    func openTerminal(for connection: Connection, password: String) async {
         // Only allow terminal for SFTP connections
         guard connection.connectionType == .sftp else {
             logWarning("Terminal only supported for SFTP connections", category: .ui)
             return
         }
 
-        let result = TerminalLauncher.launchTerminal(
+        let result = await TerminalLauncher.launchTerminal(
             host: connection.host,
             port: connection.port,
             username: connection.username,
@@ -410,11 +410,11 @@ final class ConnectionListViewModel {
 
             // Check for saved password
             if let savedPassword = keychainService.getPassword(for: connection.id) {
-                openTerminal(for: connection, password: savedPassword)
+                await openTerminal(for: connection, password: savedPassword)
             } else if connection.authMethod == .privateKey {
                 // Key-based auth doesn't require a password — connect directly
                 logInfo("Private key auth, opening terminal without password", category: .ui)
-                openTerminal(for: connection, password: "")
+                await openTerminal(for: connection, password: "")
             } else {
                 // Need to prompt for password
                 isShowingPasswordPrompt = true
@@ -424,9 +424,11 @@ final class ConnectionListViewModel {
 
     func openTerminalWithPassword(_ password: String) {
         guard let connection = connectionToConnect else { return }
-        openTerminal(for: connection, password: password)
         isShowingPasswordPrompt = false
         connectionToConnect = nil
+        Task { @MainActor in
+            await self.openTerminal(for: connection, password: password)
+        }
     }
 
     // MARK: - Edit Actions

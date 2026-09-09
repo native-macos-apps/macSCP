@@ -130,59 +130,67 @@ actor S3Session: S3SessionProtocol {
         currentPath = target.displayPath
         bucketName = target.bucket
 
-        let request = ListObjectsV2Input(
-            bucket: target.bucket,
-            delimiter: "/",
-            prefix: target.prefix.isEmpty ? nil : target.prefix
-        )
-
-        let response = try await s3.listObjectsV2(input: request)
-
         var files: [RemoteFile] = []
+        var isTruncated = true
+        var continuationToken: String? = nil
 
-        // Add directories (common prefixes)
-        if let commonPrefixes = response.commonPrefixes {
-            for prefixObj in commonPrefixes {
-                if let prefixKey = prefixObj.prefix {
-                    let name = extractName(from: prefixKey, basePrefix: target.prefix)
-                    if !name.isEmpty && name != "/" {
-                        let file = RemoteFile(
-                            name: name,
-                            path: buildDisplayPath(bucket: target.bucket, key: prefixKey),
-                            isDirectory: true,
-                            size: 0,
-                            permissions: "drwxr-xr-x",
-                            modificationDate: nil
-                        )
-                        files.append(file)
+        while isTruncated {
+            let request = ListObjectsV2Input(
+                bucket: target.bucket,
+                continuationToken: continuationToken,
+                delimiter: "/",
+                prefix: target.prefix.isEmpty ? nil : target.prefix
+            )
+
+            let response = try await s3.listObjectsV2(input: request)
+
+            // Add directories (common prefixes)
+            if let commonPrefixes = response.commonPrefixes {
+                for prefixObj in commonPrefixes {
+                    if let prefixKey = prefixObj.prefix {
+                        let name = extractName(from: prefixKey, basePrefix: target.prefix)
+                        if !name.isEmpty && name != "/" {
+                            let file = RemoteFile(
+                                name: name,
+                                path: buildDisplayPath(bucket: target.bucket, key: prefixKey),
+                                isDirectory: true,
+                                size: 0,
+                                permissions: "drwxr-xr-x",
+                                modificationDate: nil
+                            )
+                            files.append(file)
+                        }
                     }
                 }
             }
-        }
 
-        // Add files (contents)
-        if let contents = response.contents {
-            for object in contents {
-                if let key = object.key {
-                    // Skip the prefix itself if it's a directory marker
-                    if key == target.prefix || key.hasSuffix("/") {
-                        continue
-                    }
+            // Add files (contents)
+            if let contents = response.contents {
+                for object in contents {
+                    if let key = object.key {
+                        // Skip the prefix itself if it's a directory marker
+                        if key == target.prefix || key.hasSuffix("/") {
+                            continue
+                        }
 
-                    let name = extractName(from: key, basePrefix: target.prefix)
-                    if !name.isEmpty {
-                        let file = RemoteFile(
-                            name: name,
-                            path: buildDisplayPath(bucket: target.bucket, key: key),
-                            isDirectory: false,
-                            size: Int64(object.size ?? 0),
-                            permissions: "-rw-r--r--",
-                            modificationDate: object.lastModified
-                        )
-                        files.append(file)
+                        let name = extractName(from: key, basePrefix: target.prefix)
+                        if !name.isEmpty {
+                            let file = RemoteFile(
+                                name: name,
+                                path: buildDisplayPath(bucket: target.bucket, key: key),
+                                isDirectory: false,
+                                size: Int64(object.size ?? 0),
+                                permissions: "-rw-r--r--",
+                                modificationDate: object.lastModified
+                            )
+                            files.append(file)
+                        }
                     }
                 }
             }
+
+            isTruncated = response.isTruncated ?? false
+            continuationToken = response.nextContinuationToken
         }
 
         return RemoteFile.sortedFiles(files, by: .name)
@@ -294,23 +302,35 @@ actor S3Session: S3SessionProtocol {
             prefix += "/"
         }
 
-        // List all objects with this prefix and delete them
-        let listRequest = ListObjectsV2Input(bucket: target.bucket, prefix: prefix)
-        let response = try await s3.listObjectsV2(input: listRequest)
+        // List all objects with this prefix (paginated) and delete them in batches
+        var isTruncated = true
+        var continuationToken: String? = nil
 
-        if let contents = response.contents, !contents.isEmpty {
-            let objectsToDelete = contents.compactMap { object -> S3ClientTypes.ObjectIdentifier? in
-                guard let key = object.key else { return nil }
-                return S3ClientTypes.ObjectIdentifier(key: key)
+        while isTruncated {
+            let listRequest = ListObjectsV2Input(
+                bucket: target.bucket,
+                continuationToken: continuationToken,
+                prefix: prefix
+            )
+            let response = try await s3.listObjectsV2(input: listRequest)
+
+            if let contents = response.contents, !contents.isEmpty {
+                let objectsToDelete = contents.compactMap { object -> S3ClientTypes.ObjectIdentifier? in
+                    guard let key = object.key else { return nil }
+                    return S3ClientTypes.ObjectIdentifier(key: key)
+                }
+
+                if !objectsToDelete.isEmpty {
+                    let deleteRequest = DeleteObjectsInput(
+                        bucket: target.bucket,
+                        delete: S3ClientTypes.Delete(objects: objectsToDelete)
+                    )
+                    _ = try await s3.deleteObjects(input: deleteRequest)
+                }
             }
 
-            if !objectsToDelete.isEmpty {
-                let deleteRequest = DeleteObjectsInput(
-                    bucket: target.bucket,
-                    delete: S3ClientTypes.Delete(objects: objectsToDelete)
-                )
-                _ = try await s3.deleteObjects(input: deleteRequest)
-            }
+            isTruncated = response.isTruncated ?? false
+            continuationToken = response.nextContinuationToken
         }
 
         // Also try to delete the directory marker itself
@@ -407,24 +427,36 @@ actor S3Session: S3SessionProtocol {
             destPrefix += "/"
         }
 
-        // List all objects with source prefix
-        let listRequest = ListObjectsV2Input(bucket: sourceTarget.bucket, prefix: sourcePrefix)
-        let response = try await s3.listObjectsV2(input: listRequest)
+        // List all objects with source prefix (paginated)
+        var isTruncated = true
+        var continuationToken: String? = nil
 
-        if let contents = response.contents {
-            for object in contents {
-                if let key = object.key {
-                    let relativePath = String(key.dropFirst(sourcePrefix.count))
-                    let newKey = destPrefix + relativePath
+        while isTruncated {
+            let listRequest = ListObjectsV2Input(
+                bucket: sourceTarget.bucket,
+                continuationToken: continuationToken,
+                prefix: sourcePrefix
+            )
+            let response = try await s3.listObjectsV2(input: listRequest)
 
-                    let copyRequest = CopyObjectInput(
-                        bucket: destinationTarget.bucket,
-                        copySource: copySource(bucket: sourceTarget.bucket, key: key),
-                        key: newKey
-                    )
-                    _ = try await s3.copyObject(input: copyRequest)
+            if let contents = response.contents {
+                for object in contents {
+                    if let key = object.key {
+                        let relativePath = String(key.dropFirst(sourcePrefix.count))
+                        let newKey = destPrefix + relativePath
+
+                        let copyRequest = CopyObjectInput(
+                            bucket: destinationTarget.bucket,
+                            copySource: copySource(bucket: sourceTarget.bucket, key: key),
+                            key: newKey
+                        )
+                        _ = try await s3.copyObject(input: copyRequest)
+                    }
                 }
             }
+
+            isTruncated = response.isTruncated ?? false
+            continuationToken = response.nextContinuationToken
         }
 
         log("Copied directory: \(sourcePath) to \(destinationPath)")
@@ -456,6 +488,28 @@ actor S3Session: S3SessionProtocol {
     }
 
     func downloadFile(from remotePath: String, to localURL: URL, progress: TransferProgressHandler?) async throws {
+        if remotePath.hasSuffix("/") {
+            try await downloadDirectory(from: remotePath, to: localURL, progress: progress)
+            return
+        }
+
+        do {
+            try await downloadSingleFile(from: remotePath, to: localURL, progress: progress)
+        } catch {
+            // Check if this path represents a directory/prefix in S3
+            if let target = try? resolveObjectTarget(for: remotePath) {
+                let prefix = target.key.hasSuffix("/") ? target.key : target.key + "/"
+                let listReq = ListObjectsV2Input(bucket: target.bucket, maxKeys: 1, prefix: prefix)
+                if let resp = try? await s3?.listObjectsV2(input: listReq), let count = resp.contents?.count, count > 0 {
+                    try await downloadDirectory(from: remotePath, to: localURL, progress: progress)
+                    return
+                }
+            }
+            throw error
+        }
+    }
+
+    private func downloadSingleFile(from remotePath: String, to localURL: URL, progress: TransferProgressHandler?) async throws {
         guard let s3 = s3 else {
             throw AppError.notConnected
         }
@@ -474,13 +528,82 @@ actor S3Session: S3SessionProtocol {
             // Report initial progress
             progress?(0)
 
-            let data = try await body.readData() ?? Data()
-            try data.write(to: localURL, options: .atomic)
-            progress?(Int64(data.count))
+            // Prepare local destination file
+            let parentDir = localURL.deletingLastPathComponent()
+            try FileManager.default.createDirectory(at: parentDir, withIntermediateDirectories: true)
+            if FileManager.default.fileExists(atPath: localURL.path) {
+                try? FileManager.default.removeItem(at: localURL)
+            }
+            FileManager.default.createFile(atPath: localURL.path, contents: nil)
+
+            switch body {
+            case .data(let data):
+                if let data = data {
+                    try data.write(to: localURL)
+                    progress?(Int64(data.count))
+                }
+            case .stream(let stream):
+                let fileHandle = try FileHandle(forWritingTo: localURL)
+                defer { try? fileHandle.close() }
+
+                var totalBytes: Int64 = 0
+                let chunkSize = 64 * 1024
+
+                while let chunk = try await stream.readAsync(upToCount: chunkSize), !chunk.isEmpty {
+                    try Task.checkCancellation()
+                    try fileHandle.write(contentsOf: chunk)
+                    totalBytes += Int64(chunk.count)
+                    progress?(totalBytes)
+                }
+            case .noStream:
+                break
+            }
 
             log("Downloaded: \(remotePath) to \(localURL.path)")
         } catch {
             throw parseS3Error(error)
+        }
+    }
+
+    private func downloadDirectory(from remotePath: String, to localURL: URL, progress: TransferProgressHandler? = nil) async throws {
+        guard let s3 = s3 else {
+            throw AppError.notConnected
+        }
+
+        let target = try resolveObjectTarget(for: remotePath)
+        var prefix = target.key
+        if !prefix.hasSuffix("/") && !prefix.isEmpty {
+            prefix += "/"
+        }
+
+        try FileManager.default.createDirectory(at: localURL, withIntermediateDirectories: true)
+
+        var isTruncated = true
+        var continuationToken: String? = nil
+
+        while isTruncated {
+            let listRequest = ListObjectsV2Input(
+                bucket: target.bucket,
+                continuationToken: continuationToken,
+                prefix: prefix.isEmpty ? nil : prefix
+            )
+            let response = try await s3.listObjectsV2(input: listRequest)
+
+            if let contents = response.contents {
+                for object in contents {
+                    try Task.checkCancellation()
+                    guard let key = object.key, !key.hasSuffix("/"), key != prefix else { continue }
+
+                    let relativePath = prefix.isEmpty ? key : String(key.dropFirst(prefix.count))
+                    let destLocalURL = localURL.appendingPathComponent(relativePath)
+
+                    let objectRemotePath = buildDisplayPath(bucket: target.bucket, key: key)
+                    try await downloadSingleFile(from: objectRemotePath, to: destLocalURL, progress: progress)
+                }
+            }
+
+            isTruncated = response.isTruncated ?? false
+            continuationToken = response.nextContinuationToken
         }
     }
 
@@ -489,6 +612,16 @@ actor S3Session: S3SessionProtocol {
     }
 
     func uploadFile(from localURL: URL, to remotePath: String, progress: TransferProgressHandler?) async throws {
+        var isDir: ObjCBool = false
+        if FileManager.default.fileExists(atPath: localURL.path, isDirectory: &isDir), isDir.boolValue {
+            try await uploadDirectory(from: localURL, to: remotePath, progress: progress)
+            return
+        }
+
+        try await uploadSingleFile(from: localURL, to: remotePath, progress: progress)
+    }
+
+    private func uploadSingleFile(from localURL: URL, to remotePath: String, progress: TransferProgressHandler?) async throws {
         guard let s3 = s3 else {
             throw AppError.notConnected
         }
@@ -505,10 +638,8 @@ actor S3Session: S3SessionProtocol {
 
         do {
             if fileSize <= multipartThreshold {
-                // Small file: use simple upload (still streamed from disk)
-                let fileHandle = try FileHandle(forReadingFrom: localURL)
-                defer { try? fileHandle.close() }
-                let data = fileHandle.readDataToEndOfFile()
+                // Small file: read Data and upload
+                let data = try Data(contentsOf: localURL)
                 let request = PutObjectInput(
                     body: ByteStream.data(data),
                     bucket: target.bucket,
@@ -527,6 +658,37 @@ actor S3Session: S3SessionProtocol {
             throw parseS3Error(error)
         }
     }
+
+    private func uploadDirectory(from localURL: URL, to remotePath: String, progress: TransferProgressHandler? = nil) async throws {
+        guard let s3 = s3 else {
+            throw AppError.notConnected
+        }
+
+        // Create directory marker in S3
+        try? await createDirectory(at: remotePath)
+
+        let fileManager = FileManager.default
+        guard let enumerator = fileManager.enumerator(
+            at: localURL,
+            includingPropertiesForKeys: [.isDirectoryKey, .fileSizeKey],
+            options: []
+        ) else { return }
+
+        for case let fileURL as URL in enumerator {
+            try Task.checkCancellation()
+
+            let resourceValues = try fileURL.resourceValues(forKeys: [.isDirectoryKey])
+            let relativePath = fileURL.path.replacingOccurrences(of: localURL.path, with: "").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            let destRemotePath = remotePath.hasSuffix("/") ? "\(remotePath)\(relativePath)" : "\(remotePath)/\(relativePath)"
+
+            if resourceValues.isDirectory == true {
+                try? await createDirectory(at: destRemotePath)
+            } else {
+                try await uploadSingleFile(from: fileURL, to: destRemotePath, progress: progress)
+            }
+        }
+    }
+
 
     /// Uploads a large file using S3 multipart upload
     private func uploadMultipart(from localURL: URL, bucket: String, key: String, fileSize: Int64, progress: TransferProgressHandler? = nil) async throws {

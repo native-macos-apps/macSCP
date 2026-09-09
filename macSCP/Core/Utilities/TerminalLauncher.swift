@@ -29,7 +29,7 @@ enum TerminalLauncher {
     private static let terminalBundleIdentifier = "com.apple.Terminal"
     private static let terminalLaunchTimeout: TimeInterval = 5
 
-    /// Launches the macOS Terminal app and executes an SSH command using AppleScript.
+    /// Launches the macOS Terminal app and executes an SSH command using AppleScript asynchronously.
     @discardableResult
     static func launchTerminal(
         host: String,
@@ -37,7 +37,7 @@ enum TerminalLauncher {
         username: String,
         privateKeyPath: String? = nil,
         initialPath: String? = nil
-    ) -> Result<Void, Error> {
+    ) async -> Result<Void, Error> {
         logInfo("Launching native terminal (AppleScript) for \(username)@\(host):\(port)", category: .ui)
         
         var sshCommand = "ssh -p \(port)"
@@ -54,7 +54,7 @@ enum TerminalLauncher {
             sshCommand += " -t \"cd \\\"\(escapedPath)\\\" ; exec $SHELL -l\""
         }
 
-        switch ensureTerminalIsRunning() {
+        switch await ensureTerminalIsRunning() {
         case .success:
             break
         case .failure(let error):
@@ -83,7 +83,7 @@ enum TerminalLauncher {
         let firstAttempt = executeAppleScript(commandScript)
         if case .failure(TerminalLauncherError.executionFailed(let message)) = firstAttempt,
            isTerminalNotRunningError(message) {
-            usleep(250_000)
+            try? await Task.sleep(nanoseconds: 250_000_000)
             return executeAppleScript(commandScript)
         }
 
@@ -112,7 +112,7 @@ enum TerminalLauncher {
         return .success(())
     }
 
-    private static func ensureTerminalIsRunning() -> Result<Void, Error> {
+    private static func ensureTerminalIsRunning() async -> Result<Void, Error> {
         if isTerminalRunning() {
             return .success(())
         }
@@ -124,17 +124,10 @@ enum TerminalLauncher {
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = true
 
-        let semaphore = DispatchSemaphore(value: 0)
-        var launchError: Error?
-        NSWorkspace.shared.openApplication(at: terminalURL, configuration: configuration) { _, error in
-            launchError = error
-            semaphore.signal()
-        }
-
-        _ = semaphore.wait(timeout: .now() + terminalLaunchTimeout)
-
-        if let launchError {
-            return .failure(TerminalLauncherError.executionFailed(launchError.localizedDescription))
+        do {
+            _ = try await NSWorkspace.shared.openApplication(at: terminalURL, configuration: configuration)
+        } catch {
+            return .failure(TerminalLauncherError.executionFailed(error.localizedDescription))
         }
 
         let deadline = Date().addingTimeInterval(terminalLaunchTimeout)
@@ -142,7 +135,7 @@ enum TerminalLauncher {
             if isTerminalRunning() {
                 return .success(())
             }
-            usleep(100_000)
+            try? await Task.sleep(nanoseconds: 100_000_000)
         }
 
         return .failure(TerminalLauncherError.executionFailed("Terminal app did not finish launching in time."))

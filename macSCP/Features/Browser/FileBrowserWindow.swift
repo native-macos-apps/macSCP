@@ -42,6 +42,9 @@ struct FileBrowserWindow: View {
             }
         }
         .frame(minWidth: WindowSize.minFileBrowser.width, minHeight: WindowSize.minFileBrowser.height)
+        .onDisappear {
+            WindowManager.shared.removeFileBrowserData(for: windowId)
+        }
     }
 
     @MainActor

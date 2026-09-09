@@ -41,6 +41,9 @@ struct FileInfoWindow: View {
             }
         }
         .frame(width: WindowSize.fileInfo.width, height: WindowSize.fileInfo.height)
+        .onDisappear {
+            WindowManager.shared.removeFileInfoData(for: windowId)
+        }
     }
 
     @MainActor

@@ -236,7 +236,7 @@ final class SFTPTransferEngine: Sendable {
         let items = try fileManager.contentsOfDirectory(
             at: localDirURL,
             includingPropertiesForKeys: [.isDirectoryKey, .fileSizeKey],
-            options: [.skipsHiddenFiles]
+            options: []
         )
 
         for item in items {

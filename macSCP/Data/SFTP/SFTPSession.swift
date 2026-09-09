@@ -248,30 +248,97 @@ actor SFTPSession: SFTPSessionProtocol {
 
     func copyFile(from sourcePath: String, to destinationPath: String) async throws {
         guard let connection = connection else { throw AppError.notConnected }
-        // Fast server-side copy via shell if available
+        // Fast server-side copy via shell if available, with safe argument escaping
         do {
-            let result = try await connection.executeCommand("cp '\(sourcePath)' '\(destinationPath)'")
+            let safeSource = escapeForShell(sourcePath)
+            let safeDest = escapeForShell(destinationPath)
+            let result = try await connection.executeCommand("cp -- \(safeSource) \(safeDest)")
             if result.lowercased().contains("permission denied") {
                 throw AppError.permissionDenied
             }
-            logInfo("Copied file: \(sourcePath) to \(destinationPath)", category: .sftp)
+            logInfo("Copied file via shell: \(sourcePath) to \(destinationPath)", category: .sftp)
         } catch {
-            throw parseError(error)
+            logInfo("Shell copy failed or unsupported, falling back to pure SFTP copy: \(error)", category: .sftp)
+            do {
+                try await copyFileViaSFTP(from: sourcePath, to: destinationPath)
+                logInfo("Copied file via SFTP: \(sourcePath) to \(destinationPath)", category: .sftp)
+            } catch {
+                throw parseError(error)
+            }
         }
     }
 
     func copyDirectory(from sourcePath: String, to destinationPath: String) async throws {
         guard let connection = connection else { throw AppError.notConnected }
         do {
-            let result = try await connection.executeCommand("cp -r '\(sourcePath)' '\(destinationPath)'")
+            let safeSource = escapeForShell(sourcePath)
+            let safeDest = escapeForShell(destinationPath)
+            let result = try await connection.executeCommand("cp -r -- \(safeSource) \(safeDest)")
             if result.lowercased().contains("permission denied") {
                 throw AppError.permissionDenied
             }
-            logInfo("Copied directory: \(sourcePath) to \(destinationPath)", category: .sftp)
+            logInfo("Copied directory via shell: \(sourcePath) to \(destinationPath)", category: .sftp)
         } catch {
-            throw parseError(error)
+            logInfo("Shell copy failed or unsupported, falling back to pure SFTP copy: \(error)", category: .sftp)
+            do {
+                try await copyDirectoryViaSFTP(from: sourcePath, to: destinationPath)
+                logInfo("Copied directory via SFTP: \(sourcePath) to \(destinationPath)", category: .sftp)
+            } catch {
+                throw parseError(error)
+            }
         }
     }
+
+    private func escapeForShell(_ path: String) -> String {
+        "'" + path.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
+    private func copyFileViaSFTP(from sourcePath: String, to destinationPath: String) async throws {
+        guard let client = client else { throw AppError.notConnected }
+
+        let readHandle = try await client.openFile(path: sourcePath, flags: [.read])
+        defer {
+            Task {
+                try? await client.closeHandle(readHandle)
+            }
+        }
+
+        let writeHandle = try await client.openFile(path: destinationPath, flags: [.write, .creat, .trunc])
+        defer {
+            Task {
+                try? await client.closeHandle(writeHandle)
+            }
+        }
+
+        var offset: UInt64 = 0
+        let chunkSize: UInt32 = 64 * 1024
+
+        while let chunk = try await client.read(handle: readHandle, offset: offset, length: chunkSize) {
+            let count = chunk.readableBytes
+            if count == 0 { break }
+            try await client.write(handle: writeHandle, offset: offset, data: chunk)
+            offset += UInt64(count)
+        }
+    }
+
+    private func copyDirectoryViaSFTP(from sourcePath: String, to destinationPath: String) async throws {
+        guard let client = client else { throw AppError.notConnected }
+
+        try? await client.createDirectory(at: destinationPath)
+        let entries = try await client.listDirectory(at: sourcePath)
+
+        for entry in entries {
+            let childSource = sourcePath.hasSuffix("/") ? "\(sourcePath)\(entry.filename)" : "\(sourcePath)/\(entry.filename)"
+            let childDest = destinationPath.hasSuffix("/") ? "\(destinationPath)\(entry.filename)" : "\(destinationPath)/\(entry.filename)"
+
+            if entry.attributes.isDirectory {
+                try await copyDirectoryViaSFTP(from: childSource, to: childDest)
+            } else {
+                try await copyFileViaSFTP(from: childSource, to: childDest)
+            }
+        }
+    }
+
 
     // MARK: - High-Performance Pipelined Transfers
 

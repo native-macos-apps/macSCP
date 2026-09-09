@@ -27,7 +27,7 @@ actor SSHConnection {
 
         let clientConfig = SSHClientConfiguration(
             userAuthDelegate: userAuthDelegate,
-            serverAuthDelegate: AcceptAllServerAuthDelegate()
+            serverAuthDelegate: KnownHostsServerAuthDelegate(host: host, port: port)
         )
 
         let sshHandler = NIOSSHHandler(

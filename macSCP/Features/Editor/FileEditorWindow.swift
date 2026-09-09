@@ -51,6 +51,7 @@ struct FileEditorWindow: View {
         }
         .frame(minWidth: WindowSize.fileEditor.width, minHeight: WindowSize.fileEditor.height)
         .onDisappear {
+            WindowManager.shared.removeFileEditorData(for: windowId)
             Task {
                 await viewModel?.cleanup()
             }

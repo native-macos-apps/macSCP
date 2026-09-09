@@ -36,7 +36,35 @@ nonisolated final class SSHKeyUserAuthDelegate: NIOSSHClientUserAuthenticationDe
     }
 }
 
-// MARK: - Server Host Key Validator (Accept All)
+// MARK: - Server Host Key Validator (Known Hosts Verification)
+
+nonisolated final class KnownHostsServerAuthDelegate: NIOSSHClientServerAuthenticationDelegate, @unchecked Sendable {
+    private let host: String
+    private let port: Int
+
+    nonisolated init(host: String, port: Int) {
+        self.host = host
+        self.port = port
+    }
+
+    nonisolated func validateHostKey(hostKey: NIOSSHPublicKey, validationCompletePromise: EventLoopPromise<Void>) {
+        let result = KnownHostsManager.shared.verify(host: host, port: port, hostKey: hostKey)
+        switch result {
+        case .trusted:
+            logInfo("SSH host key trusted for \(host):\(port)", category: .sftp)
+            validationCompletePromise.succeed(())
+        case .newHostAdded(let fingerprint):
+            logInfo("New SSH host key recorded for \(host):\(port): \(fingerprint)", category: .sftp)
+            validationCompletePromise.succeed(())
+        case .hostKeyMismatch(let expected, let actual):
+            logError("POTENTIAL MITM ATTACK! Host key mismatch for \(host):\(port). Expected: \(expected), Got: \(actual)", category: .sftp)
+            let error = AppError.connectionFailed("Host key verification failed for \(host):\(port)! The server host key has changed (Expected: \(expected), Actual: \(actual)). This could indicate a Man-In-The-Middle attack.")
+            validationCompletePromise.fail(error)
+        }
+    }
+}
+
+// MARK: - Server Host Key Validator (Accept All Fallback)
 
 nonisolated final class AcceptAllServerAuthDelegate: NIOSSHClientServerAuthenticationDelegate, @unchecked Sendable {
     nonisolated init() {}
@@ -45,6 +73,7 @@ nonisolated final class AcceptAllServerAuthDelegate: NIOSSHClientServerAuthentic
         validationCompletePromise.succeed(())
     }
 }
+
 
 // MARK: - OpenSSH Key Parser
 
