@@ -68,6 +68,10 @@ struct RemoteFile: Identifiable, Hashable, Sendable, Codable {
         permissions.hasPrefix("l")
     }
 
+    nonisolated var isBucket: Bool {
+        isDirectory && permissions.hasPrefix("b")
+    }
+
     nonisolated var isExecutable: Bool {
         permissions.contains("x")
     }

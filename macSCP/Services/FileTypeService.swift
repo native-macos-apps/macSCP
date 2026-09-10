@@ -12,13 +12,16 @@ import UniformTypeIdentifiers
 
 enum FileTypeService {
     static func isBucket(_ file: RemoteFile) -> Bool {
-        file.isDirectory && file.permissions.hasPrefix("b")
+        file.isBucket
     }
 
     /// Returns the native macOS system icon (NSImage) for a file or directory, matching Finder
     static func systemIcon(for file: RemoteFile) -> NSImage {
         if isBucket(file) {
-            return NSWorkspace.shared.icon(for: .volume)
+            if let symbol = NSImage(systemSymbolName: "archivebox.fill", accessibilityDescription: "Bucket") {
+                let config = NSImage.SymbolConfiguration(hierarchicalColor: .systemOrange)
+                return symbol.withSymbolConfiguration(config) ?? symbol
+            }
         }
 
         if file.isDirectory {

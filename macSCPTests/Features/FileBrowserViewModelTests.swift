@@ -364,10 +364,17 @@ final class FileBrowserViewModelTests: XCTestCase {
             permissions: "drwxr-xr-x"
         )
 
+        XCTAssertTrue(bucket.isBucket)
+        XCTAssertFalse(folder.isBucket)
+        XCTAssertTrue(FileTypeService.isBucket(bucket))
+        XCTAssertFalse(FileTypeService.isBucket(folder))
+
         let bucketIcon = FileTypeService.systemIcon(for: bucket)
         let folderIcon = FileTypeService.systemIcon(for: folder)
         XCTAssertTrue(bucketIcon.isValid)
         XCTAssertTrue(folderIcon.isValid)
+        XCTAssertNotEqual(bucketIcon.tiffRepresentation, folderIcon.tiffRepresentation)
         XCTAssertEqual(FileTypeService.typeDescription(for: bucket), "Bucket")
+        XCTAssertEqual(FileTypeService.typeDescription(for: folder), "Folder")
     }
 }
