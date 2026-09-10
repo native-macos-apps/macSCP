@@ -21,14 +21,11 @@ struct CommanderPaneHeaderView: View {
                 // Source Selector Menu
                 sourcePickerMenu
 
-                Divider()
-                    .frame(height: 16)
-                    .padding(.horizontal, 2)
+                if pane.browserViewModel == nil {
+                    Divider()
+                        .frame(height: 16)
+                        .padding(.horizontal, 2)
 
-                // Navigation Controls (if in file browser)
-                if let browserVM = pane.browserViewModel {
-                    navigationButtons(for: browserVM)
-                } else {
                     // Servers mode: Search input directly in header (saves 1 whole row!)
                     HStack(spacing: 5) {
                         Image(systemName: "magnifyingglass")
@@ -77,104 +74,67 @@ struct CommanderPaneHeaderView: View {
 
     // MARK: - Source Selector Menu
 
+    @ViewBuilder
     private var sourcePickerMenu: some View {
-        Menu {
+        switch pane.contentType {
+        case .servers:
             Button {
                 commanderViewModel.switchToLocal(in: pane.position)
             } label: {
-                Label("Local Mac (Home)", systemImage: "laptopcomputer")
+                Image(systemName: "laptopcomputer")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 20, height: 20)
+                    .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .help("Switch to Local Mac")
 
-            Button {
-                chooseCustomLocalFolder()
-            } label: {
-                Label("Choose Local Folder…", systemImage: "folder")
-            }
-
-            Button {
-                commanderViewModel.switchToServers(in: pane.position)
-            } label: {
-                Label("Servers", systemImage: "server.rack")
-            }
-
-            if !commanderViewModel.connectionListViewModel.connections.isEmpty {
-                Divider()
-
-                Menu("Connect to...") {
-                    ForEach(commanderViewModel.connectionListViewModel.connections) { connection in
-                        Button {
-                            commanderViewModel.connect(to: connection, in: pane.position)
-                        } label: {
-                            Label(connection.name, systemImage: connection.connectionType.iconName)
-                        }
-                    }
-                }
-            }
-
-            if case .remote = pane.contentType {
-                Divider()
-                Button(role: .destructive) {
-                    commanderViewModel.disconnect(in: pane.position)
+        case .local:
+            HStack(spacing: 6) {
+                Button {
+                    commanderViewModel.switchToServers(in: pane.position)
                 } label: {
-                    Label("Disconnect", systemImage: "power")
+                    Image(systemName: "eject.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 20, height: 20)
+                        .contentShape(Rectangle())
                 }
-            }
-        } label: {
-            HStack(spacing: 5) {
-                Image(systemName: pane.contentType.iconName)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.primary)
+                .buttonStyle(.plain)
+                .help("Disconnect and return to Servers")
 
-                Text(pane.contentType.title)
+                Divider()
+                    .frame(height: 16)
+                    .padding(.horizontal, 2)
+
+                Text("Local Mac")
                     .font(.system(size: 12, weight: .semibold))
                     .lineLimit(1)
-
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundStyle(.secondary)
             }
-            .padding(.horizontal, 6)
-            .padding(.vertical, 3)
-            .background(RoundedRectangle(cornerRadius: 5).fill(Color.primary.opacity(0.06)))
-        }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
-    }
 
-    // MARK: - Navigation Buttons
+        case .remote(let conn):
+            HStack(spacing: 6) {
+                Button {
+                    commanderViewModel.disconnect(in: pane.position)
+                } label: {
+                    Image(systemName: "eject.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 20, height: 20)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Disconnect")
 
-    @ViewBuilder
-    private func navigationButtons(for browserVM: FileBrowserViewModel) -> some View {
-        HStack(spacing: 2) {
-            Button {
-                Task { await browserVM.goBack() }
-            } label: {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 11, weight: .semibold))
+                Divider()
+                    .frame(height: 16)
+                    .padding(.horizontal, 2)
+
+                Text(conn.name)
+                    .font(.system(size: 12, weight: .semibold))
+                    .lineLimit(1)
             }
-            .buttonStyle(.plain)
-            .disabled(!browserVM.canGoBack)
-            .help("Back")
-
-            Button {
-                Task { await browserVM.goForward() }
-            } label: {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 11, weight: .semibold))
-            }
-            .buttonStyle(.plain)
-            .disabled(!browserVM.canGoForward)
-            .help("Forward")
-
-            Button {
-                Task { await browserVM.goUp() }
-            } label: {
-                Image(systemName: "arrow.up")
-                    .font(.system(size: 11, weight: .semibold))
-            }
-            .buttonStyle(.plain)
-            .disabled(!browserVM.canGoUp)
-            .help("Enclosing Folder")
         }
     }
 
@@ -314,20 +274,5 @@ struct CommanderPaneHeaderView: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
         .background(Color.primary.opacity(0.03))
-    }
-
-    private func chooseCustomLocalFolder() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.canCreateDirectories = true
-        panel.prompt = "Select Folder"
-        panel.directoryURL = URL(fileURLWithPath: LocalFileRepository.userHomeDirectory)
-        panel.begin { response in
-            if response == .OK, let url = panel.url {
-                commanderViewModel.switchToLocal(in: pane.position, initialPath: url.path)
-            }
-        }
     }
 }
