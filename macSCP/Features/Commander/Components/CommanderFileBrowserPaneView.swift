@@ -174,42 +174,31 @@ struct CommanderFileBrowserPaneView: View {
 
     private var statusBar: some View {
         HStack(spacing: 8) {
-            // Selected item info or total item count
-            if !viewModel.selectedFiles.isEmpty {
-                Text("\(viewModel.selectedFiles.count) of \(viewModel.files.count) selected")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
+            // Path / Breadcrumb Bar at footer
+            BreadcrumbView(
+                components: viewModel.pathComponents,
+                onNavigate: { path in
+                    Task { await viewModel.navigateTo(path) }
+                }
+            )
+            .frame(maxWidth: .infinity, alignment: .leading)
 
-                if let primary = viewModel.primarySelectedFile, !primary.isDirectory {
-                    Text("•")
-                        .font(.system(size: 9))
-                        .foregroundStyle(.tertiary)
-                    Text(primary.displaySize)
-                        .font(.system(size: 11))
+            if !viewModel.isLocal {
+                // Connection indicator for remote servers
+                HStack(spacing: 4) {
+                    Circle()
+                        .fill(viewModel.isConnected ? Color.green : Color.red)
+                        .frame(width: 6, height: 6)
+
+                    Text(viewModel.isConnected ? "Connected" : "Disconnected")
+                        .font(.system(size: 10))
                         .foregroundStyle(.secondary)
                 }
-            } else {
-                Text("\(viewModel.files.count) item\(viewModel.files.count == 1 ? "" : "s")")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer()
-
-
-            // Connection indicator
-            HStack(spacing: 4) {
-                Circle()
-                    .fill(viewModel.isConnected ? Color.green : Color.red)
-                    .frame(width: 6, height: 6)
-
-                Text(viewModel.isConnected ? "Connected" : "Disconnected")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
+                .fixedSize()
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 4)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
         .background(.bar)
     }
 

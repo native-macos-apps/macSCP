@@ -9,6 +9,7 @@ import SwiftUI
 
 struct CommanderWorkspaceView: View {
     @State private var viewModel: CommanderViewModel
+    @State private var newFolderName = ""
 
     init(container: DependencyContainer) {
         self._viewModel = State(initialValue: CommanderViewModel(container: container))
@@ -191,6 +192,36 @@ struct CommanderWorkspaceView: View {
                         viewModel.connectionListViewModel.connectionToEdit = nil
                     }
                 )
+            }
+        }
+        // New Folder Alert
+        .alert("New Folder", isPresented: $viewModel.connectionListViewModel.isShowingNewFolderSheet) {
+            TextField("Folder name", text: $newFolderName)
+            Button("Create") {
+                let name = newFolderName.trimmed
+                if !name.isEmpty {
+                    Task { await viewModel.connectionListViewModel.createFolder(name: name) }
+                }
+                newFolderName = ""
+            }
+            .keyboardShortcut(.defaultAction)
+            Button("Cancel", role: .cancel) {
+                newFolderName = ""
+            }
+        } message: {
+            Text("Enter a name for the new folder.")
+        }
+        // Delete Folder Alert
+        .alert("Delete Folder", isPresented: $viewModel.connectionListViewModel.isShowingDeleteFolderAlert) {
+            Button("Delete", role: .destructive) {
+                if let folder = viewModel.connectionListViewModel.folderToDelete {
+                    Task { await viewModel.connectionListViewModel.deleteFolder(folder) }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            if let folder = viewModel.connectionListViewModel.folderToDelete {
+                Text("Are you sure you want to delete \"\(folder.name)\"? Connections inside this folder will not be deleted.")
             }
         }
         .errorAlert($viewModel.error)

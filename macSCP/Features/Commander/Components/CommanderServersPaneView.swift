@@ -11,9 +11,6 @@ struct CommanderServersPaneView: View {
     @Bindable var commanderViewModel: CommanderViewModel
     let pane: CommanderPaneState
 
-    @State private var isShowingNewFolderAlert = false
-    @State private var newFolderName = ""
-
     private var viewModel: ConnectionListViewModel {
         commanderViewModel.connectionListViewModel
     }
@@ -47,34 +44,6 @@ struct CommanderServersPaneView: View {
             bottomBar
         }
         .background(Color(nsColor: .controlBackgroundColor))
-        .alert("New Folder", isPresented: $isShowingNewFolderAlert) {
-            TextField("Folder name", text: $newFolderName)
-            Button("Create") {
-                let name = newFolderName.trimmed
-                if !name.isEmpty {
-                    Task { await viewModel.createFolder(name: name) }
-                }
-                newFolderName = ""
-            }
-            .keyboardShortcut(.defaultAction)
-            Button("Cancel", role: .cancel) {
-                newFolderName = ""
-            }
-        } message: {
-            Text("Enter a name for the new folder.")
-        }
-        .alert("Delete Folder", isPresented: $commanderViewModel.connectionListViewModel.isShowingDeleteFolderAlert) {
-            Button("Delete", role: .destructive) {
-                if let folder = viewModel.folderToDelete {
-                    Task { await viewModel.deleteFolder(folder) }
-                }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            if let folder = viewModel.folderToDelete {
-                Text("Are you sure you want to delete \"\(folder.name)\"? Connections inside this folder will not be deleted.")
-            }
-        }
     }
 
     // MARK: - Connections List (Native NSTableView / NSOutlineView)
@@ -113,7 +82,7 @@ struct CommanderServersPaneView: View {
                 viewModel.isShowingNewConnectionSheet = true
             },
             onNewFolder: {
-                isShowingNewFolderAlert = true
+                viewModel.isShowingNewFolderSheet = true
             }
         )
     }
@@ -136,22 +105,6 @@ struct CommanderServersPaneView: View {
             }
 
             Spacer()
-
-            Button {
-                isShowingNewFolderAlert = true
-            } label: {
-                Label("New Folder", systemImage: "folder.badge.plus")
-                    .font(.system(size: 11))
-            }
-            .buttonStyle(.borderless)
-
-            Button {
-                viewModel.isShowingNewConnectionSheet = true
-            } label: {
-                Label("New Connection", systemImage: "plus")
-                    .font(.system(size: 11, weight: .medium))
-            }
-            .buttonStyle(.borderless)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)

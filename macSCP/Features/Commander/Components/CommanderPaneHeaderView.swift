@@ -28,19 +28,6 @@ struct CommanderPaneHeaderView: View {
                 // Navigation Controls (if in file browser)
                 if let browserVM = pane.browserViewModel {
                     navigationButtons(for: browserVM)
-
-                    Divider()
-                        .frame(height: 16)
-                        .padding(.horizontal, 2)
-
-                    // Path / Breadcrumb Bar
-                    BreadcrumbView(
-                        components: browserVM.pathComponents,
-                        onNavigate: { path in
-                            Task { await browserVM.navigateTo(path) }
-                        }
-                    )
-                    .frame(maxWidth: .infinity, alignment: .leading)
                 } else {
                     // Servers mode: Search input directly in header (saves 1 whole row!)
                     HStack(spacing: 5) {
@@ -203,6 +190,8 @@ struct CommanderPaneHeaderView: View {
                 } label: {
                     Image(systemName: "folder.badge.plus")
                         .font(.system(size: 12))
+                        .frame(width: 20, height: 20)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .help("New Folder")
@@ -214,6 +203,8 @@ struct CommanderPaneHeaderView: View {
                     Image(systemName: browserVM.showHiddenFiles ? "eye.fill" : "eye.slash")
                         .font(.system(size: 12))
                         .foregroundStyle(browserVM.showHiddenFiles ? Color.accentColor : Color.secondary)
+                        .frame(width: 20, height: 20)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .help(browserVM.showHiddenFiles ? "Hide Hidden Files" : "Show Hidden Files")
@@ -230,6 +221,8 @@ struct CommanderPaneHeaderView: View {
                     Image(systemName: "magnifyingglass")
                         .font(.system(size: 12))
                         .foregroundStyle(isShowingSearch ? Color.accentColor : Color.secondary)
+                        .frame(width: 20, height: 20)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .help("Search in Pane")
@@ -241,24 +234,47 @@ struct CommanderPaneHeaderView: View {
                     Image(systemName: "sidebar.right")
                         .font(.system(size: 12))
                         .foregroundStyle(browserVM.isShowingQuickLook ? Color.accentColor : Color.secondary)
+                        .frame(width: 20, height: 20)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .help("Toggle Preview Panel")
-            }
 
-            // Refresh
-            Button {
-                if let browserVM = pane.browserViewModel {
+                // Refresh
+                Button {
                     Task { await browserVM.refresh() }
-                } else {
-                    Task { await commanderViewModel.connectionListViewModel.loadData() }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 12))
+                        .frame(width: 20, height: 20)
+                        .contentShape(Rectangle())
                 }
-            } label: {
-                Image(systemName: "arrow.clockwise")
-                    .font(.system(size: 12))
+                .buttonStyle(.plain)
+                .help("Refresh")
+            } else {
+                // Servers mode: New Folder & New Connection (No Refresh button)
+                Button {
+                    commanderViewModel.connectionListViewModel.isShowingNewFolderSheet = true
+                } label: {
+                    Image(systemName: "folder.badge.plus")
+                        .font(.system(size: 12))
+                        .frame(width: 20, height: 20)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("New Folder")
+
+                Button {
+                    commanderViewModel.connectionListViewModel.isShowingNewConnectionSheet = true
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 12, weight: .medium))
+                        .frame(width: 20, height: 20)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("New Connection")
             }
-            .buttonStyle(.plain)
-            .help("Refresh")
         }
     }
 
