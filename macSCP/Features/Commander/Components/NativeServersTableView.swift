@@ -208,7 +208,7 @@ extension NativeServersTableView {
             guard let node = item as? ServerOutlineNode else { return 36 }
             switch node.kind {
             case .folder, .ungroupedHeader:
-                return 26
+                return 28
             case .connection:
                 return 38
             }
@@ -526,6 +526,7 @@ final class ServerTableCellView: NSTableCellView {
     private let detailLabel = NSTextField(labelWithString: "")
     private let badgeLabel = NSTextField(labelWithString: "")
     private let badgeContainer = NSBox()
+    private var defaultIconColor: NSColor = .systemBlue
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -594,6 +595,29 @@ final class ServerTableCellView: NSTableCellView {
         ])
     }
 
+    override var backgroundStyle: NSView.BackgroundStyle {
+        didSet {
+            updateColors()
+        }
+    }
+
+    private func updateColors() {
+        let isEmphasized = backgroundStyle == .emphasized
+        if isEmphasized {
+            nameLabel.textColor = .white
+            detailLabel.textColor = NSColor.white.withAlphaComponent(0.8)
+            badgeLabel.textColor = .white
+            badgeContainer.fillColor = NSColor.white.withAlphaComponent(0.2)
+            iconImageView.contentTintColor = .white
+        } else {
+            nameLabel.textColor = .labelColor
+            detailLabel.textColor = .secondaryLabelColor
+            badgeLabel.textColor = .secondaryLabelColor
+            badgeContainer.fillColor = NSColor.labelColor.withAlphaComponent(0.06)
+            iconImageView.contentTintColor = defaultIconColor
+        }
+    }
+
     func configure(connection: Connection) {
         nameLabel.stringValue = connection.name
         detailLabel.stringValue = connection.connectionString
@@ -607,12 +631,13 @@ final class ServerTableCellView: NSTableCellView {
 
         switch connection.connectionType {
         case .sftp:
-            iconImageView.contentTintColor = .systemBlue
+            defaultIconColor = .systemBlue
         case .s3:
-            iconImageView.contentTintColor = .systemOrange
+            defaultIconColor = .systemOrange
         case .local:
-            iconImageView.contentTintColor = .systemGreen
+            defaultIconColor = .systemGreen
         }
+        updateColors()
     }
 }
 
@@ -620,6 +645,7 @@ final class FolderTableCellView: NSTableCellView {
     private let iconImageView = NSImageView()
     private let titleLabel = NSTextField(labelWithString: "")
     private let countLabel = NSTextField(labelWithString: "")
+    private var defaultTintColor: NSColor = .controlAccentColor
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -637,22 +663,22 @@ final class FolderTableCellView: NSTableCellView {
         addSubview(iconImageView)
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.font = .systemFont(ofSize: 11, weight: .semibold)
-        titleLabel.textColor = .secondaryLabelColor
+        titleLabel.font = .systemFont(ofSize: 12, weight: .semibold)
+        titleLabel.textColor = .labelColor
         addSubview(titleLabel)
 
         countLabel.translatesAutoresizingMaskIntoConstraints = false
-        countLabel.font = .systemFont(ofSize: 10, weight: .regular)
-        countLabel.textColor = .tertiaryLabelColor
+        countLabel.font = .systemFont(ofSize: 11, weight: .regular)
+        countLabel.textColor = .secondaryLabelColor
         addSubview(countLabel)
 
         NSLayoutConstraint.activate([
-            iconImageView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2),
+            iconImageView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
             iconImageView.centerYAnchor.constraint(equalTo: centerYAnchor),
-            iconImageView.widthAnchor.constraint(equalToConstant: 14),
-            iconImageView.heightAnchor.constraint(equalToConstant: 14),
+            iconImageView.widthAnchor.constraint(equalToConstant: 20),
+            iconImageView.heightAnchor.constraint(equalToConstant: 18),
 
-            titleLabel.leadingAnchor.constraint(equalTo: iconImageView.trailingAnchor, constant: 6),
+            titleLabel.leadingAnchor.constraint(equalTo: iconImageView.trailingAnchor, constant: 7),
             titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
 
             countLabel.leadingAnchor.constraint(equalTo: titleLabel.trailingAnchor, constant: 4),
@@ -661,21 +687,44 @@ final class FolderTableCellView: NSTableCellView {
         ])
     }
 
+    override var backgroundStyle: NSView.BackgroundStyle {
+        didSet {
+            updateColors()
+        }
+    }
+
+    private func updateColors() {
+        let isEmphasized = backgroundStyle == .emphasized
+        if isEmphasized {
+            titleLabel.textColor = .white
+            countLabel.textColor = NSColor.white.withAlphaComponent(0.75)
+            iconImageView.contentTintColor = .white
+        } else {
+            titleLabel.textColor = .labelColor
+            countLabel.textColor = .secondaryLabelColor
+            iconImageView.contentTintColor = defaultTintColor
+        }
+    }
+
     func configure(folder: Folder, count: Int) {
         titleLabel.stringValue = folder.name
         countLabel.stringValue = "(\(count))"
+        defaultTintColor = .controlAccentColor
         if let img = NSImage(systemSymbolName: "folder.fill", accessibilityDescription: nil) {
-            iconImageView.image = img
-            iconImageView.contentTintColor = .controlAccentColor
+            let config = NSImage.SymbolConfiguration(pointSize: 15, weight: .medium)
+            iconImageView.image = img.withSymbolConfiguration(config)
         }
+        updateColors()
     }
 
     func configure(title: String, iconName: String, count: Int) {
         titleLabel.stringValue = title
         countLabel.stringValue = "(\(count))"
+        defaultTintColor = .secondaryLabelColor
         if let img = NSImage(systemSymbolName: iconName, accessibilityDescription: nil) {
-            iconImageView.image = img
-            iconImageView.contentTintColor = .secondaryLabelColor
+            let config = NSImage.SymbolConfiguration(pointSize: 14, weight: .medium)
+            iconImageView.image = img.withSymbolConfiguration(config)
         }
+        updateColors()
     }
 }
