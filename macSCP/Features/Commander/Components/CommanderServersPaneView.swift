@@ -2,7 +2,7 @@
 //  CommanderServersPaneView.swift
 //  macSCP
 //
-//  Servers/Connections view organized directly by folders (Transmit 5 style)
+//  Servers/Connections view organized directly by folders using native NSTableView / NSOutlineView
 //
 
 import SwiftUI
@@ -11,8 +11,6 @@ struct CommanderServersPaneView: View {
     @Bindable var commanderViewModel: CommanderViewModel
     let pane: CommanderPaneState
 
-    @State private var selectedConnectionId: UUID?
-    @State private var collapsedFolderIds: Set<UUID> = []
     @State private var isShowingNewFolderAlert = false
     @State private var newFolderName = ""
 
@@ -30,14 +28,6 @@ struct CommanderServersPaneView: View {
 
     private var hasAnyMatchingConnections: Bool {
         viewModel.connections.contains(where: matchesSearch)
-    }
-
-    private var unfolderedConnections: [Connection] {
-        viewModel.connections.filter { $0.folderId == nil && matchesSearch($0) }
-    }
-
-    private func connections(for folder: Folder) -> [Connection] {
-        viewModel.connections.filter { $0.folderId == folder.id && matchesSearch($0) }
     }
 
     var body: some View {
@@ -73,247 +63,59 @@ struct CommanderServersPaneView: View {
         } message: {
             Text("Enter a name for the new folder.")
         }
+        .alert("Delete Folder", isPresented: $commanderViewModel.connectionListViewModel.isShowingDeleteFolderAlert) {
+            Button("Delete", role: .destructive) {
+                if let folder = viewModel.folderToDelete {
+                    Task { await viewModel.deleteFolder(folder) }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            if let folder = viewModel.folderToDelete {
+                Text("Are you sure you want to delete \"\(folder.name)\"? Connections inside this folder will not be deleted.")
+            }
+        }
     }
 
-    // MARK: - Connections List (Organized by Folders)
+    // MARK: - Connections List (Native NSTableView / NSOutlineView)
 
     private var connectionsList: some View {
-        ScrollView {
-            LazyVStack(spacing: 6) {
-                // 1. Folders sections
-                ForEach(viewModel.folders) { folder in
-                    let conns = connections(for: folder)
-                    let isCollapsed = collapsedFolderIds.contains(folder.id)
-                    let shouldShow = !conns.isEmpty || pane.serverSearchText.isEmpty
-
-                    if shouldShow {
-                        folderSection(folder: folder, connections: conns, isCollapsed: isCollapsed)
-                    }
-                }
-
-                // 2. Unfoldered / Other Connections
-                if !unfolderedConnections.isEmpty {
-                    if !viewModel.folders.isEmpty {
-                        unfolderedHeader
-                    }
-
-                    ForEach(unfolderedConnections) { connection in
-                        serverRow(connection)
-                    }
-                }
-            }
-            .padding(8)
-        }
-    }
-
-    // MARK: - Folder Section
-
-    private func folderSection(folder: Folder, connections: [Connection], isCollapsed: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            // Folder Header Row
-            Button {
-                withAnimation(.easeInOut(duration: 0.15)) {
-                    if isCollapsed {
-                        collapsedFolderIds.remove(folder.id)
-                    } else {
-                        collapsedFolderIds.insert(folder.id)
-                    }
-                }
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 12)
-
-                    Image(systemName: "folder.fill")
-                        .font(.system(size: 13))
-                        .foregroundStyle(.tint)
-
-                    Text(folder.name)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.primary)
-
-                    Text("(\(connections.count))")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-
-                    Spacer()
-                }
-                .padding(.horizontal, 6)
-                .padding(.vertical, 4)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .contextMenu {
-                Button {
-                    viewModel.folderToDelete = folder
-                    viewModel.isShowingDeleteFolderAlert = true
-                } label: {
-                    Label("Delete Folder", systemImage: "trash")
-                }
-            }
-
-            // Folder Connections
-            if !isCollapsed {
-                VStack(spacing: 4) {
-                    if connections.isEmpty {
-                        Text("No connections in this folder")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.tertiary)
-                            .padding(.leading, 24)
-                            .padding(.vertical, 4)
-                    } else {
-                        ForEach(connections) { connection in
-                            serverRow(connection)
-                                .padding(.leading, 14)
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private var unfolderedHeader: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "tray.fill")
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-            Text("Ungrouped")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.secondary)
-            Text("(\(unfolderedConnections.count))")
-                .font(.system(size: 10))
-                .foregroundStyle(.tertiary)
-            Spacer()
-        }
-        .padding(.horizontal, 6)
-        .padding(.top, 6)
-        .padding(.bottom, 2)
-    }
-
-    // MARK: - Server Row
-
-    private func serverRow(_ connection: Connection) -> some View {
-        let isSelected = selectedConnectionId == connection.id
-
-        return HStack(spacing: 10) {
-            Image(systemName: connection.iconName)
-                .font(.system(size: 17))
-                .foregroundStyle(iconColor(for: connection))
-                .frame(width: 24, alignment: .center)
-
-            VStack(alignment: .leading, spacing: 2) {
-                HStack {
-                    Text(connection.name)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(isSelected ? .white : .primary)
-                        .lineLimit(1)
-
-                    Spacer()
-
-                    Text(connection.connectionType.displayName)
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundStyle(isSelected ? .white.opacity(0.8) : .secondary)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1)
-                        .background(
-                            isSelected ? Color.white.opacity(0.2) : Color.primary.opacity(0.06),
-                            in: Capsule()
-                        )
-                }
-
-                Text(connection.connectionString)
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(isSelected ? .white.opacity(0.8) : .secondary)
-                    .lineLimit(1)
-            }
-
-            // Quick Connect Button
-            Button {
-                commanderViewModel.connect(to: connection, in: pane.position)
-            } label: {
-                Text("Connect")
-                    .font(.system(size: 11, weight: .medium))
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.small)
-            .tint(isSelected ? .white.opacity(0.3) : .accentColor)
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .background {
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(isSelected ? Color.accentColor : Color.primary.opacity(0.02))
-        }
-        .contentShape(Rectangle())
-        .onTapGesture {
-            selectedConnectionId = connection.id
-        }
-        .simultaneousGesture(
-            TapGesture(count: 2).onEnded {
-                commanderViewModel.connect(to: connection, in: pane.position)
+        NativeServersTableView(
+            folders: viewModel.folders,
+            connections: viewModel.connections,
+            searchText: pane.serverSearchText,
+            onConnect: { conn in
+                commanderViewModel.connect(to: conn, in: pane.position)
+            },
+            onConnectInOtherPane: { conn in
+                commanderViewModel.connect(to: conn, in: pane.position.other)
+            },
+            onOpenTerminal: { conn in
+                commanderViewModel.openTerminal(for: conn)
+            },
+            onEdit: { conn in
+                viewModel.editConnection(conn)
+            },
+            onDuplicate: { conn in
+                Task { await viewModel.duplicateConnection(conn) }
+            },
+            onDelete: { conn in
+                Task { await viewModel.deleteConnection(conn) }
+            },
+            onMove: { conn, folder in
+                Task { await viewModel.moveConnection(conn, to: folder) }
+            },
+            onDeleteFolder: { folder in
+                viewModel.folderToDelete = folder
+                viewModel.isShowingDeleteFolderAlert = true
+            },
+            onNewConnection: {
+                viewModel.isShowingNewConnectionSheet = true
+            },
+            onNewFolder: {
+                isShowingNewFolderAlert = true
             }
         )
-        .contextMenu {
-            Button {
-                commanderViewModel.connect(to: connection, in: pane.position)
-            } label: {
-                Label("Connect in this Pane", systemImage: "bolt.fill")
-            }
-
-            Button {
-                commanderViewModel.connect(to: connection, in: pane.position.other)
-            } label: {
-                Label("Connect in Other Pane", systemImage: "arrow.right.circle")
-            }
-
-            Divider()
-
-            Button {
-                viewModel.editConnection(connection)
-            } label: {
-                Label("Edit…", systemImage: "pencil")
-            }
-
-            Button {
-                Task { await viewModel.duplicateConnection(connection) }
-            } label: {
-                Label("Duplicate", systemImage: "doc.on.doc")
-            }
-
-            if !viewModel.folders.isEmpty {
-                Menu("Move to Folder") {
-                    Button("None (Ungrouped)") {
-                        Task { await viewModel.moveConnection(connection, to: nil) }
-                    }
-                    Divider()
-                    ForEach(viewModel.folders) { folder in
-                        Button(folder.name) {
-                            Task { await viewModel.moveConnection(connection, to: folder) }
-                        }
-                    }
-                }
-            }
-
-            Divider()
-
-            Button(role: .destructive) {
-                Task { await viewModel.deleteConnection(connection) }
-            } label: {
-                Label("Delete", systemImage: "trash")
-            }
-        }
-    }
-
-    private func iconColor(for connection: Connection) -> Color {
-        switch connection.connectionType {
-        case .sftp: return .blue
-        case .s3:   return .orange
-        case .local: return .green
-        }
     }
 
     // MARK: - Bottom Bar

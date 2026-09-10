@@ -148,7 +148,7 @@ final class FileBrowserViewModel {
         clipboardService: ClipboardService,
         initialPath: String? = nil
     ) {
-        let homeDir = FileManager.default.homeDirectoryForCurrentUser.path
+        let homeDir = LocalFileRepository.userHomeDirectory
         let startingPath = initialPath ?? homeDir
         self.connection = Connection(
             id: UUID(),

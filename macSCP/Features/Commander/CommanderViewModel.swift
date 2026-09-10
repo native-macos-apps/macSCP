@@ -394,8 +394,22 @@ final class CommanderViewModel {
             return
         }
 
+        openTerminal(for: connection, initialPath: active.browserViewModel?.currentPath)
+    }
+
+    func openTerminal(for connection: Connection, initialPath: String? = nil) {
+        guard connection.connectionType == .sftp else {
+            logWarning("Terminal is only available for SFTP connections", category: .ui)
+            return
+        }
+
         Task {
-            let initialPath = active.browserViewModel?.currentPath
+            let allowed = await AppLockManager.shared.authenticateForConnection()
+            guard allowed else {
+                logInfo("Terminal cancelled: biometric auth denied", category: .auth)
+                return
+            }
+
             _ = await TerminalLauncher.launchTerminal(
                 host: connection.host,
                 port: connection.port,

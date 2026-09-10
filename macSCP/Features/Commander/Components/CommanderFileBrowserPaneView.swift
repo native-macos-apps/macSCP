@@ -116,13 +116,55 @@ struct CommanderFileBrowserPaneView: View {
             }
 
         case .error(let error):
-            ErrorView(error: error) {
-                Task {
-                    if viewModel.isConnected {
-                        await viewModel.refresh()
-                    } else {
-                        await viewModel.connect()
+            VStack(spacing: 14) {
+                ErrorView(error: error) {
+                    Task {
+                        if viewModel.isConnected {
+                            await viewModel.refresh()
+                        } else {
+                            await viewModel.connect()
+                        }
                     }
+                }
+
+                if viewModel.isLocal {
+                    HStack(spacing: 10) {
+                        Button {
+                            chooseLocalFolder()
+                        } label: {
+                            Label("Choose Folder…", systemImage: "folder")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+
+                        Button {
+                            Task {
+                                await viewModel.navigateTo(LocalFileRepository.userHomeDirectory)
+                            }
+                        } label: {
+                            Label("Go to Home (~)", systemImage: "house")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                    .padding(.bottom, 16)
+                }
+            }
+        }
+    }
+
+    private func chooseLocalFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = true
+        panel.prompt = "Select Folder"
+        panel.directoryURL = URL(fileURLWithPath: LocalFileRepository.userHomeDirectory)
+        panel.begin { response in
+            if response == .OK, let url = panel.url {
+                Task {
+                    await viewModel.navigateTo(url.path)
                 }
             }
         }
@@ -154,22 +196,6 @@ struct CommanderFileBrowserPaneView: View {
 
             Spacer()
 
-            // Transfer to other pane button
-            if !viewModel.selectedFiles.isEmpty {
-                Button {
-                    commanderViewModel.transfer(from: pane.position, to: pane.position.other)
-                } label: {
-                    HStack(spacing: 3) {
-                        Text(pane.position == .left ? "Transfer to Right" : "Transfer to Left")
-                            .font(.system(size: 10, weight: .medium))
-                        Image(systemName: pane.position == .left ? "arrow.right.circle.fill" : "arrow.left.circle.fill")
-                            .font(.system(size: 10))
-                    }
-                }
-                .buttonStyle(.borderless)
-                .foregroundStyle(Color.accentColor)
-                .help("Transfer selected items to the other pane")
-            }
 
             // Connection indicator
             HStack(spacing: 4) {

@@ -95,7 +95,13 @@ struct CommanderPaneHeaderView: View {
             Button {
                 commanderViewModel.switchToLocal(in: pane.position)
             } label: {
-                Label("Local Mac", systemImage: "laptopcomputer")
+                Label("Local Mac (Home)", systemImage: "laptopcomputer")
+            }
+
+            Button {
+                chooseCustomLocalFolder()
+            } label: {
+                Label("Choose Local Folder…", systemImage: "folder")
             }
 
             Button {
@@ -292,5 +298,20 @@ struct CommanderPaneHeaderView: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
         .background(Color.primary.opacity(0.03))
+    }
+
+    private func chooseCustomLocalFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = true
+        panel.prompt = "Select Folder"
+        panel.directoryURL = URL(fileURLWithPath: LocalFileRepository.userHomeDirectory)
+        panel.begin { response in
+            if response == .OK, let url = panel.url {
+                commanderViewModel.switchToLocal(in: pane.position, initialPath: url.path)
+            }
+        }
     }
 }

@@ -12,10 +12,51 @@ final class LocalFileRepository: FileRepositoryProtocol, @unchecked Sendable {
 
     init() {}
 
+    // MARK: - Home Directory Detection
+
+    /// Returns the true home directory of the current user account (e.g. `/Users/username`),
+    /// avoiding any sandbox container paths.
+    static var userHomeDirectory: String {
+        if let pw = getpwuid(getuid()), let dir = pw.pointee.pw_dir {
+            let path = String(cString: dir)
+            if !path.isEmpty && FileManager.default.fileExists(atPath: path) {
+                return path
+            }
+        }
+        let expanded = ("~" as NSString).expandingTildeInPath
+        if !expanded.isEmpty && !expanded.contains("/Library/Containers/") {
+            return expanded
+        }
+        return FileManager.default.homeDirectoryForCurrentUser.path
+    }
+
     // MARK: - Path Resolution
 
     private func resolvePath(_ path: String) -> String {
-        let expanded = (path as NSString).expandingTildeInPath
+        let home = LocalFileRepository.userHomeDirectory
+        var expanded = path
+
+        // If path points to an old sandbox container directory, escape to actual user home
+        if expanded.contains("/Library/Containers/com.macscp.macSCP/Data") {
+            let marker = "/Library/Containers/com.macscp.macSCP/Data"
+            if let range = expanded.range(of: marker) {
+                let subpath = String(expanded[range.upperBound...])
+                if subpath.isEmpty || subpath == "/" {
+                    expanded = home
+                } else {
+                    let cleaned = subpath.hasPrefix("/") ? String(subpath.dropFirst()) : subpath
+                    expanded = (home as NSString).appendingPathComponent(cleaned)
+                }
+            }
+        }
+
+        if expanded == "~" {
+            expanded = home
+        } else if expanded.hasPrefix("~/") {
+            expanded = (home as NSString).appendingPathComponent(String(expanded.dropFirst(2)))
+        } else {
+            expanded = (expanded as NSString).expandingTildeInPath
+        }
         let standardized = (expanded as NSString).standardizingPath
         return standardized.isEmpty ? "/" : standardized
     }
@@ -24,34 +65,43 @@ final class LocalFileRepository: FileRepositoryProtocol, @unchecked Sendable {
 
     func listFiles(at path: String) async throws -> [RemoteFile] {
         let resolved = resolvePath(path)
-        let url = URL(fileURLWithPath: resolved)
+        let rawURL = URL(fileURLWithPath: resolved)
+        let url = rawURL.resolvingSymlinksInPath()
+        let targetPath = url.path
 
-        guard let contents = try? fileManager.contentsOfDirectory(
-            at: url,
-            includingPropertiesForKeys: [
-                .isDirectoryKey,
-                .fileSizeKey,
-                .contentModificationDateKey
-            ],
-            options: [.skipsPackageDescendants]
-        ) else {
-            // Check if directory exists
-            var isDir: ObjCBool = false
-            if !fileManager.fileExists(atPath: resolved, isDirectory: &isDir) {
-                throw AppError.fileNotFound
-            }
-            throw AppError.permissionDenied
+        var isDir: ObjCBool = false
+        guard fileManager.fileExists(atPath: targetPath, isDirectory: &isDir) else {
+            throw AppError.fileNotFound
         }
 
-        var files: [RemoteFile] = []
-        for fileURL in contents {
-            let filePath = fileURL.path
-            if let file = try? fileInfo(at: filePath) {
-                files.append(file)
-            }
-        }
+        do {
+            let contents = try fileManager.contentsOfDirectory(
+                at: url,
+                includingPropertiesForKeys: [
+                    .isDirectoryKey,
+                    .fileSizeKey,
+                    .contentModificationDateKey
+                ],
+                options: [.skipsPackageDescendants]
+            )
 
-        return files
+            var files: [RemoteFile] = []
+            for fileURL in contents {
+                let filePath = fileURL.path
+                if let file = try? fileInfo(at: filePath) {
+                    files.append(file)
+                }
+            }
+
+            return files
+        } catch {
+            logError("Failed to list files at \(resolved) (target: \(targetPath)): \(error)", category: .app)
+            let nsError = error as NSError
+            if nsError.domain == NSCocoaErrorDomain && (nsError.code == NSFileReadNoPermissionError || nsError.code == 513) {
+                throw AppError.permissionDenied
+            }
+            throw AppError.from(error)
+        }
     }
 
     func getFileInfo(at path: String) async throws -> RemoteFile {
