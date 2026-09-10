@@ -693,33 +693,33 @@ final class FolderTableCellView: NSTableCellView {
         }
     }
 
+    private var isSystemFolderIcon = false
+
     private func updateColors() {
         let isEmphasized = backgroundStyle == .emphasized
         if isEmphasized {
             titleLabel.textColor = .white
             countLabel.textColor = NSColor.white.withAlphaComponent(0.75)
-            iconImageView.contentTintColor = .white
+            iconImageView.contentTintColor = isSystemFolderIcon ? nil : .white
         } else {
             titleLabel.textColor = .labelColor
             countLabel.textColor = .secondaryLabelColor
-            iconImageView.contentTintColor = defaultTintColor
+            iconImageView.contentTintColor = isSystemFolderIcon ? nil : defaultTintColor
         }
     }
 
     func configure(folder: Folder, count: Int) {
         titleLabel.stringValue = folder.name
         countLabel.stringValue = "(\(count))"
-        defaultTintColor = .controlAccentColor
-        if let img = NSImage(systemSymbolName: "folder.fill", accessibilityDescription: nil) {
-            let config = NSImage.SymbolConfiguration(pointSize: 15, weight: .medium)
-            iconImageView.image = img.withSymbolConfiguration(config)
-        }
+        isSystemFolderIcon = true
+        iconImageView.image = NSWorkspace.shared.icon(for: .folder)
         updateColors()
     }
 
     func configure(title: String, iconName: String, count: Int) {
         titleLabel.stringValue = title
         countLabel.stringValue = "(\(count))"
+        isSystemFolderIcon = false
         defaultTintColor = .secondaryLabelColor
         if let img = NSImage(systemSymbolName: iconName, accessibilityDescription: nil) {
             let config = NSImage.SymbolConfiguration(pointSize: 14, weight: .medium)
