@@ -18,7 +18,7 @@
   <a href="https://github.com/native-macos-apps/macSCP/releases"><img src="https://img.shields.io/github/downloads/native-macos-apps/macSCP/total" alt="Downloads"/></a>
   <img src="https://img.shields.io/badge/macOS-15.0%2B-blue?logo=apple" alt="macOS 15.0+"/>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-CC0--1.0-green" alt="License CC0"/></a>
-  <a href="https://github.com/native-macos-apps/macSCP/stargazers"><img src="https://img.shields.io/github/stars/macnev2013/macSCP?style=social" alt="Stars"/></a>
+  <a href="https://github.com/native-macos-apps/macSCP/stargazers"><img src="https://img.shields.io/github/stars/native-macos-apps/macSCP?style=social" alt="Stars"/></a>
 </p>
 
 ---
@@ -305,8 +305,8 @@ This project is licensed under CC0 1.0 Universal - see the [LICENSE](LICENSE) fi
 
 ## Support
 
-- **Issues**: [GitHub Issues](https://github.com/macnev2013/macSCP/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/macnev2013/macSCP/discussions)
+- **Issues**: [GitHub Issues](https://github.com/native-macos-apps/macSCP/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/native-macos-apps/macSCP/discussions)
 
 ---
 
