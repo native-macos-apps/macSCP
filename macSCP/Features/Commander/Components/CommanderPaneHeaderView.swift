@@ -21,43 +21,15 @@ struct CommanderPaneHeaderView: View {
                 // Source Selector Menu
                 sourcePickerMenu
 
-                if pane.browserViewModel == nil {
-                    Divider()
-                        .frame(height: 16)
-                        .padding(.horizontal, 2)
-
-                    // Servers mode: Search input directly in header (saves 1 whole row!)
-                    HStack(spacing: 5) {
-                        Image(systemName: "magnifyingglass")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-
-                        TextField("Search servers…", text: Bindable(pane).serverSearchText)
-                            .textFieldStyle(.plain)
-                            .font(.system(size: 11))
-
-                        if !pane.serverSearchText.isEmpty {
-                            Button {
-                                pane.serverSearchText = ""
-                            } label: {
-                                Image(systemName: "xmark.circle.fill")
-                                    .font(.system(size: 10))
-                                    .foregroundStyle(.secondary)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 3)
-                    .background(RoundedRectangle(cornerRadius: 4).fill(Color.primary.opacity(0.05)))
-                    .frame(maxWidth: 240)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-
                 Spacer(minLength: 4)
 
-                // Actions
-                actionButtons
+                if pane.browserViewModel == nil {
+                    // Servers mode: Search input on the right
+                    serverSearchBar
+                } else {
+                    // Actions
+                    actionButtons
+                }
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
@@ -211,31 +183,37 @@ struct CommanderPaneHeaderView: View {
                 }
                 .buttonStyle(.plain)
                 .help("Refresh")
-            } else {
-                // Servers mode: New Folder & New Connection (No Refresh button)
-                Button {
-                    commanderViewModel.connectionListViewModel.isShowingNewFolderSheet = true
-                } label: {
-                    Image(systemName: "folder.badge.plus")
-                        .font(.system(size: 12))
-                        .frame(width: 20, height: 20)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help("New Folder")
-
-                Button {
-                    commanderViewModel.connectionListViewModel.isShowingNewConnectionSheet = true
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 12, weight: .medium))
-                        .frame(width: 20, height: 20)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help("New Connection")
             }
         }
+    }
+
+    // MARK: - Server Search Bar (Servers Mode)
+
+    private var serverSearchBar: some View {
+        HStack(spacing: 5) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+
+            TextField("Search servers…", text: Bindable(pane).serverSearchText)
+                .textFieldStyle(.plain)
+                .font(.system(size: 11))
+
+            if !pane.serverSearchText.isEmpty {
+                Button {
+                    pane.serverSearchText = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .background(RoundedRectangle(cornerRadius: 4).fill(Color.primary.opacity(0.05)))
+        .frame(maxWidth: 200)
     }
 
     // MARK: - Search Bar

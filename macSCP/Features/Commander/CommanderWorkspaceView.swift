@@ -19,18 +19,6 @@ struct CommanderWorkspaceView: View {
         self.init(container: DependencyContainer.shared)
     }
 
-    private var canTransferToRight: Bool {
-        guard let leftVM = viewModel.leftPane.browserViewModel,
-              viewModel.rightPane.browserViewModel != nil else { return false }
-        return !leftVM.selectedFiles.isEmpty
-    }
-
-    private var canTransferToLeft: Bool {
-        guard let rightVM = viewModel.rightPane.browserViewModel,
-              viewModel.leftPane.browserViewModel != nil else { return false }
-        return !rightVM.selectedFiles.isEmpty
-    }
-
     var body: some View {
         VStack(spacing: 0) {
             if viewModel.isDualPane {
@@ -83,24 +71,8 @@ struct CommanderWorkspaceView: View {
                 }
             }
 
-            // Transfer Actions
+            // Toolbar Actions
             ToolbarItemGroup(placement: .primaryAction) {
-                Button {
-                    viewModel.transfer(from: .left, to: .right)
-                } label: {
-                    Label("Upload to Right", systemImage: "arrow.right")
-                }
-                .disabled(!canTransferToRight)
-                .help("Transfer selected files from Left to Right")
-
-                Button {
-                    viewModel.transfer(from: .right, to: .left)
-                } label: {
-                    Label("Download to Left", systemImage: "arrow.left")
-                }
-                .disabled(!canTransferToLeft)
-                .help("Transfer selected files from Right to Left")
-
                 // New Connection
                 Button {
                     viewModel.connectionListViewModel.isShowingNewConnectionSheet = true
@@ -109,14 +81,13 @@ struct CommanderWorkspaceView: View {
                 }
                 .help("Add New Connection")
 
-                // Terminal
+                // New Folder
                 Button {
-                    viewModel.openTerminalForActivePane()
+                    viewModel.connectionListViewModel.isShowingNewFolderSheet = true
                 } label: {
-                    Label("Terminal", systemImage: "terminal")
+                    Label("New Folder", systemImage: "folder.badge.plus")
                 }
-                .disabled(!isActiveRemoteSFTP)
-                .help("Open Terminal for Active Server")
+                .help("Add New Folder")
 
                 // Global Transfers
                 Button {
@@ -225,12 +196,5 @@ struct CommanderWorkspaceView: View {
             }
         }
         .errorAlert($viewModel.error)
-    }
-
-    private var isActiveRemoteSFTP: Bool {
-        if case .remote(let conn) = viewModel.activePane.contentType {
-            return conn.connectionType == .sftp
-        }
-        return false
     }
 }
