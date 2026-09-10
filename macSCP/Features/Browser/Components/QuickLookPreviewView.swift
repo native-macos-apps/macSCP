@@ -113,9 +113,10 @@ struct QuickLookPreviewView: View {
                 .frame(width: 72, height: 72)
                 .shadow(color: .black.opacity(0.06), radius: 2, y: 1)
 
-            Image(systemName: FileTypeService.iconName(for: file))
-                .font(.system(size: 36))
-                .foregroundStyle(FileTypeService.iconColor(for: file))
+            Image(nsImage: FileTypeService.systemIcon(for: file))
+                .resizable()
+                .scaledToFit()
+                .frame(width: 44, height: 44)
         }
     }
 

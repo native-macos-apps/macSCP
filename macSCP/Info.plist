@@ -27,5 +27,11 @@
 	</array>
 	<key>NSAppleEventsUsageDescription</key>
 	<string>macSCP needs permission to automate Terminal to open SSH sessions.</string>
+	<key>NSDocumentsFolderUsageDescription</key>
+	<string>macSCP needs permission to access files in your Documents folder to manage and transfer files.</string>
+	<key>NSDownloadsFolderUsageDescription</key>
+	<string>macSCP needs permission to access files in your Downloads folder to manage and transfer files.</string>
+	<key>NSDesktopFolderUsageDescription</key>
+	<string>macSCP needs permission to access files in your Desktop folder to manage and transfer files.</string>
 </dict>
 </plist>

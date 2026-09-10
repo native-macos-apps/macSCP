@@ -68,6 +68,10 @@ struct RemoteFile: Identifiable, Hashable, Sendable, Codable {
         permissions.hasPrefix("l")
     }
 
+    nonisolated var isBucket: Bool {
+        isDirectory && permissions.hasPrefix("b")
+    }
+
     nonisolated var isExecutable: Bool {
         permissions.contains("x")
     }
@@ -97,25 +101,6 @@ enum FileType: String, Sendable {
     case executable
     case configuration
     case unknown
-
-    nonisolated var iconName: String {
-        switch self {
-        case .directory: return "folder.fill"
-        case .text: return "doc.text.fill"
-        case .code: return "chevron.left.forwardslash.chevron.right"
-        case .image: return "photo.fill"
-        case .video: return "video.fill"
-        case .audio: return "music.note"
-        case .archive: return "doc.zipper"
-        case .document: return "doc.fill"
-        case .spreadsheet: return "tablecells.fill"
-        case .presentation: return "play.rectangle.fill"
-        case .pdf: return "doc.richtext.fill"
-        case .executable: return "terminal.fill"
-        case .configuration: return "gearshape.fill"
-        case .unknown: return "doc.fill"
-        }
-    }
 
     nonisolated var isEditable: Bool {
         switch self {

@@ -7,60 +7,40 @@
 
 import Foundation
 import SwiftUI
+import AppKit
 import UniformTypeIdentifiers
 
 enum FileTypeService {
-    private static func isBucket(_ file: RemoteFile) -> Bool {
-        file.isDirectory && file.permissions.hasPrefix("b")
+    static func isBucket(_ file: RemoteFile) -> Bool {
+        file.isBucket
     }
 
-    /// Returns the SF Symbol name for a file
-    static func iconName(for file: RemoteFile) -> String {
+    /// Returns the native macOS system icon (NSImage) for a file or directory, matching Finder
+    static func systemIcon(for file: RemoteFile) -> NSImage {
         if isBucket(file) {
-            return "externaldrive.fill"
+            if let symbol = NSImage(systemSymbolName: "archivebox.fill", accessibilityDescription: "Bucket") {
+                let config = NSImage.SymbolConfiguration(hierarchicalColor: .systemOrange)
+                return symbol.withSymbolConfiguration(config) ?? symbol
+            }
         }
 
         if file.isDirectory {
-            return "folder.fill"
+            return NSWorkspace.shared.icon(for: .folder)
         }
 
-        return file.fileType.iconName
-    }
-
-    /// Returns the icon color for a file type
-    static func iconColor(for file: RemoteFile) -> Color {
-        if isBucket(file) {
-            return .teal
+        if file.isSymlink {
+            return NSWorkspace.shared.icon(for: .symbolicLink)
         }
 
-        if file.isDirectory {
-            return .blue
+        if let utType = utType(for: file.fileExtension) {
+            return NSWorkspace.shared.icon(for: utType)
         }
 
-        switch file.fileType {
-        case .code, .configuration:
-            return .orange
-        case .image:
-            return .purple
-        case .video:
-            return .pink
-        case .audio:
-            return .green
-        case .archive:
-            return .brown
-        case .document, .text:
-            return .blue
-        case .spreadsheet:
-            return .green
-        case .presentation:
-            return .orange
-        case .pdf:
-            return .red
-        case .executable:
-            return .gray
-        default:
-            return .secondary
+        if !file.fileExtension.isEmpty {
+            return NSWorkspace.shared.icon(forFileType: file.fileExtension)
         }
+
+        return NSWorkspace.shared.icon(for: .item)
     }
 
     /// Returns whether a file can be previewed/edited in the app

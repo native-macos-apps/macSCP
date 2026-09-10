@@ -14,11 +14,11 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/macnev2013/macSCP/releases"><img src="https://img.shields.io/github/v/release/macnev2013/macSCP" alt="Release"/></a>
-  <a href="https://github.com/macnev2013/macSCP/releases"><img src="https://img.shields.io/github/downloads/macnev2013/macSCP/total" alt="Downloads"/></a>
+  <a href="https://github.com/native-macos-apps/macSCP/releases"><img src="https://img.shields.io/github/v/release/native-macos-apps/macSCP" alt="Release"/></a>
+  <a href="https://github.com/native-macos-apps/macSCP/releases"><img src="https://img.shields.io/github/downloads/native-macos-apps/macSCP/total" alt="Downloads"/></a>
   <img src="https://img.shields.io/badge/macOS-15.0%2B-blue?logo=apple" alt="macOS 15.0+"/>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-CC0--1.0-green" alt="License CC0"/></a>
-  <a href="https://github.com/macnev2013/macSCP/stargazers"><img src="https://img.shields.io/github/stars/macnev2013/macSCP?style=social" alt="Stars"/></a>
+  <a href="https://github.com/native-macos-apps/macSCP/stargazers"><img src="https://img.shields.io/github/stars/native-macos-apps/macSCP?style=social" alt="Stars"/></a>
 </p>
 
 ---
@@ -133,7 +133,7 @@ macSCP is a modern, native macOS application built with SwiftUI that provides se
 ## Installation
 
 ### Download
-1. Download the latest release from the [Releases](https://github.com/macnev2013/macSCP/releases) page
+1. Download the latest release from the [Releases](https://github.com/native-macos-apps/macSCP/releases) page
 2. Open the `.dmg` file
 3. Drag macSCP to your Applications folder
 4. Launch macSCP from Applications
@@ -162,7 +162,7 @@ macSCP uses Swift Package Manager for dependency management. Required packages:
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/macnev2013/macSCP.git
+   git clone https://github.com/native-macos-apps/macSCP.git
    cd macSCP
    ```
 
@@ -263,9 +263,8 @@ Future features under consideration:
 - [x] Native Terminal integration
 - [ ] File synchronization
 - [ ] Bookmarks and favorites
-- [ ] Split-pane view
+- [x] Split-pane view
 - [ ] Import/export connections
-- [ ] Multi-tab support
 - [ ] iCloud sync for connections
 
 ## Troubleshooting
@@ -306,13 +305,13 @@ This project is licensed under CC0 1.0 Universal - see the [LICENSE](LICENSE) fi
 
 ## Support
 
-- **Issues**: [GitHub Issues](https://github.com/macnev2013/macSCP/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/macnev2013/macSCP/discussions)
+- **Issues**: [GitHub Issues](https://github.com/native-macos-apps/macSCP/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/native-macos-apps/macSCP/discussions)
 
 ---
 
 <p align="center">
-  If you find macSCP useful, please consider giving it a <a href="https://github.com/macnev2013/macSCP">star on GitHub</a>!
+  If you find macSCP useful, please consider giving it a <a href="https://github.com/native-macos-apps/macSCP">star on GitHub</a>!
 </p>
 
 <p align="center">

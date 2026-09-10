@@ -356,8 +356,25 @@ final class FileBrowserViewModelTests: XCTestCase {
             size: 0,
             permissions: "brwxr-xr-x"
         )
+        let folder = RemoteFile(
+            name: "photos",
+            path: "/photos",
+            isDirectory: true,
+            size: 0,
+            permissions: "drwxr-xr-x"
+        )
 
-        XCTAssertEqual(FileTypeService.iconName(for: bucket), "externaldrive.fill")
+        XCTAssertTrue(bucket.isBucket)
+        XCTAssertFalse(folder.isBucket)
+        XCTAssertTrue(FileTypeService.isBucket(bucket))
+        XCTAssertFalse(FileTypeService.isBucket(folder))
+
+        let bucketIcon = FileTypeService.systemIcon(for: bucket)
+        let folderIcon = FileTypeService.systemIcon(for: folder)
+        XCTAssertTrue(bucketIcon.isValid)
+        XCTAssertTrue(folderIcon.isValid)
+        XCTAssertNotEqual(bucketIcon.tiffRepresentation, folderIcon.tiffRepresentation)
         XCTAssertEqual(FileTypeService.typeDescription(for: bucket), "Bucket")
+        XCTAssertEqual(FileTypeService.typeDescription(for: folder), "Folder")
     }
 }

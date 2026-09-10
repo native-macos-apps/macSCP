@@ -305,13 +305,8 @@ struct NativeFileTableView: NSViewRepresentable {
             case "name":
                 cell?.textField?.stringValue = file.name
                 cell?.textField?.textColor   = .labelColor
-                let iconName = FileTypeService.iconName(for: file)
-                if let img = NSImage(systemSymbolName: iconName,
-                                     accessibilityDescription: nil) {
-                    cell?.imageView?.image = img
-                    cell?.imageView?.contentTintColor =
-                        NSColor(FileTypeService.iconColor(for: file))
-                }
+                cell?.imageView?.image       = FileTypeService.systemIcon(for: file)
+                cell?.imageView?.contentTintColor = nil
             case "date":
                 cell?.textField?.stringValue = file.modificationDate?.fileListDisplayString ?? "--"
                 cell?.textField?.textColor   = .secondaryLabelColor

@@ -7,6 +7,7 @@
 
 import Foundation
 import SwiftUI
+import AppKit
 
 @MainActor
 @Observable
@@ -49,12 +50,8 @@ final class FileInfoViewModel {
         file.modificationDate?.fileInfoDisplayString ?? "Unknown"
     }
 
-    var iconName: String {
-        FileTypeService.iconName(for: file)
-    }
-
-    var iconColor: Color {
-        FileTypeService.iconColor(for: file)
+    var systemIcon: NSImage {
+        FileTypeService.systemIcon(for: file)
     }
 
     var isDirectory: Bool {

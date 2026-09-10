@@ -40,9 +40,10 @@ struct FileInfoView: View {
 
     private var headerSection: some View {
         VStack(spacing: UIConstants.smallSpacing) {
-            Image(systemName: viewModel.iconName)
-                .font(.system(size: 48))
-                .foregroundStyle(viewModel.iconColor)
+            Image(nsImage: viewModel.systemIcon)
+                .resizable()
+                .scaledToFit()
+                .frame(width: 48, height: 48)
 
             Text(viewModel.fileName)
                 .font(.headline)

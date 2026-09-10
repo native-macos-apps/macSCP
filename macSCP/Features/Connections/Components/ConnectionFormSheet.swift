@@ -91,7 +91,7 @@ struct ConnectionFormSheet: View {
                 if !isEditMode {
                     Section {
                         Picker("Type", selection: $selectedType) {
-                            ForEach(ConnectionType.allCases, id: \.self) { type in
+                            ForEach(ConnectionType.creatableCases, id: \.self) { type in
                                 Text(type.displayName).tag(type)
                             }
                         }
@@ -243,6 +243,8 @@ struct ConnectionFormSheet: View {
         case .s3:
             return !name.trimmed.isEmpty &&
                 !username.trimmed.isEmpty
+        case .local:
+            return true
         }
     }
 
