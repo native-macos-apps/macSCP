@@ -88,4 +88,12 @@ final class CommanderViewModelTests: XCTestCase {
         XCTAssertEqual(sut.activePane.position, .right)
         XCTAssertEqual(sut.inactivePane.position, .left)
     }
+
+    // MARK: - Transfer Actions
+
+    func testTransferSelectedToOppositePane() {
+        // When no files selected, transfer does not crash
+        sut.transferSelectedToOppositePane()
+        XCTAssertFalse(sut.hasActiveTransfers)
+    }
 }

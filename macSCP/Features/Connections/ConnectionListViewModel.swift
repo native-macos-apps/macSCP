@@ -32,11 +32,13 @@ final class ConnectionListViewModel {
     var isShowingNewFolderSheet = false
     var isShowingPasswordPrompt = false
     var isShowingDeleteFolderAlert = false
+    var isShowingRenameFolderAlert = false
 
     // Editing state
     var connectionToEdit: Connection?
     var connectionToConnect: Connection?
     var folderToDelete: Folder?
+    var folderToRename: Folder?
 
     // Window opening state
     var pendingWindowId: String?
@@ -476,6 +478,16 @@ final class ConnectionListViewModel {
     func cancelDeleteFolder() {
         folderToDelete = nil
         isShowingDeleteFolderAlert = false
+    }
+
+    func confirmRenameFolder(_ folder: Folder) {
+        folderToRename = folder
+        isShowingRenameFolderAlert = true
+    }
+
+    func cancelRenameFolder() {
+        folderToRename = nil
+        isShowingRenameFolderAlert = false
     }
 
     func clearError() {

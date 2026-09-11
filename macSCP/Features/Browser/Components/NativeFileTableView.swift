@@ -28,25 +28,75 @@ final class FileTreeNode {
 
 // MARK: - NativeFileTableView
 
+// MARK: - Drag & Drop Payload
+
+struct DraggedItemPayload: Codable {
+    let sourcePosition: String
+    let file: RemoteFile
+}
+
+final class MacSCPFilePromiseProvider: NSFilePromiseProvider {
+    var payloadData: Data?
+    var localURL: URL?
+
+    override func writableTypes(for pasteboard: NSPasteboard) -> [NSPasteboard.PasteboardType] {
+        var types = super.writableTypes(for: pasteboard)
+        types.append(NativeFileTableView.macSCPDragType)
+        if localURL != nil {
+            types.append(.fileURL)
+        }
+        return types
+    }
+
+    override func pasteboardPropertyList(forType type: NSPasteboard.PasteboardType) -> Any? {
+        if type == NativeFileTableView.macSCPDragType {
+            return payloadData
+        }
+        if type == .fileURL, let localURL = localURL {
+            return localURL.absoluteString
+        }
+        return super.pasteboardPropertyList(forType: type)
+    }
+}
+
+// MARK: - NativeFileTableView
+
 struct NativeFileTableView: NSViewRepresentable {
+    static let macSCPDragType = NSPasteboard.PasteboardType("com.macscp.file-drag")
+
     @Bindable var viewModel: FileBrowserViewModel
     let files: [RemoteFile]
     let onDoubleClick: (RemoteFile) -> Void
     let onGetInfo: (RemoteFile) -> Void
     let onOpenEditor: ((RemoteFile) -> Void)?
+    var panePosition: PanePosition? = nil
+    var transferToOtherPaneTitle: String? = nil
+    var transferToOtherPaneIcon: String = "arrow.right.circle"
+    var onTransferToOtherPane: ((RemoteFile) -> Void)? = nil
+    var onDropRemoteFiles: (([RemoteFile], PanePosition?) -> Void)? = nil
 
     init(
         viewModel: FileBrowserViewModel,
         files: [RemoteFile],
         onDoubleClick: @escaping (RemoteFile) -> Void,
         onGetInfo: @escaping (RemoteFile) -> Void,
-        onOpenEditor: ((RemoteFile) -> Void)? = nil
+        onOpenEditor: ((RemoteFile) -> Void)? = nil,
+        panePosition: PanePosition? = nil,
+        transferToOtherPaneTitle: String? = nil,
+        transferToOtherPaneIcon: String = "arrow.right.circle",
+        onTransferToOtherPane: ((RemoteFile) -> Void)? = nil,
+        onDropRemoteFiles: (([RemoteFile], PanePosition?) -> Void)? = nil
     ) {
         self.viewModel = viewModel
         self.files = files
         self.onDoubleClick = onDoubleClick
         self.onGetInfo = onGetInfo
         self.onOpenEditor = onOpenEditor
+        self.panePosition = panePosition
+        self.transferToOtherPaneTitle = transferToOtherPaneTitle
+        self.transferToOtherPaneIcon = transferToOtherPaneIcon
+        self.onTransferToOtherPane = onTransferToOtherPane
+        self.onDropRemoteFiles = onDropRemoteFiles
     }
 
     // MARK: makeNSView
@@ -106,8 +156,10 @@ struct NativeFileTableView: NSViewRepresentable {
         outlineView.doubleAction = #selector(Coordinator.handleDoubleClick(_:))
 
         // ── Drag & Drop ────────────────────────────────────────────────────────
+        outlineView.setDraggingSourceOperationMask(.copy, forLocal: true)
         outlineView.setDraggingSourceOperationMask(.copy, forLocal: false)
         outlineView.registerForDraggedTypes([
+            NativeFileTableView.macSCPDragType,
             .fileURL,
             NSPasteboard.PasteboardType("com.apple.NSFilePromiseProvider")
         ])
@@ -131,11 +183,16 @@ struct NativeFileTableView: NSViewRepresentable {
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         let coordinator = context.coordinator
-        coordinator.viewModel      = viewModel
-        coordinator.files          = files
-        coordinator.onDoubleClick  = onDoubleClick
-        coordinator.onGetInfo      = onGetInfo
-        coordinator.onOpenEditor   = onOpenEditor
+        coordinator.viewModel                 = viewModel
+        coordinator.files                     = files
+        coordinator.onDoubleClick             = onDoubleClick
+        coordinator.onGetInfo                 = onGetInfo
+        coordinator.onOpenEditor              = onOpenEditor
+        coordinator.panePosition              = panePosition
+        coordinator.transferToOtherPaneTitle  = transferToOtherPaneTitle
+        coordinator.transferToOtherPaneIcon   = transferToOtherPaneIcon
+        coordinator.onTransferToOtherPane     = onTransferToOtherPane
+        coordinator.onDropRemoteFiles         = onDropRemoteFiles
 
         guard let outlineView = coordinator.outlineView else { return }
 
@@ -164,7 +221,12 @@ struct NativeFileTableView: NSViewRepresentable {
             files: files,
             onDoubleClick: onDoubleClick,
             onGetInfo: onGetInfo,
-            onOpenEditor: onOpenEditor
+            onOpenEditor: onOpenEditor,
+            panePosition: panePosition,
+            transferToOtherPaneTitle: transferToOtherPaneTitle,
+            transferToOtherPaneIcon: transferToOtherPaneIcon,
+            onTransferToOtherPane: onTransferToOtherPane,
+            onDropRemoteFiles: onDropRemoteFiles
         )
     }
 
@@ -182,6 +244,11 @@ struct NativeFileTableView: NSViewRepresentable {
         var onDoubleClick: (RemoteFile) -> Void
         var onGetInfo: (RemoteFile) -> Void
         var onOpenEditor: ((RemoteFile) -> Void)?
+        var panePosition: PanePosition?
+        var transferToOtherPaneTitle: String?
+        var transferToOtherPaneIcon: String
+        var onTransferToOtherPane: ((RemoteFile) -> Void)?
+        var onDropRemoteFiles: (([RemoteFile], PanePosition?) -> Void)?
         weak var outlineView: NSOutlineView?
         var isUpdating = false
 
@@ -196,13 +263,23 @@ struct NativeFileTableView: NSViewRepresentable {
             files: [RemoteFile],
             onDoubleClick: @escaping (RemoteFile) -> Void,
             onGetInfo: @escaping (RemoteFile) -> Void,
-            onOpenEditor: ((RemoteFile) -> Void)?
+            onOpenEditor: ((RemoteFile) -> Void)?,
+            panePosition: PanePosition? = nil,
+            transferToOtherPaneTitle: String? = nil,
+            transferToOtherPaneIcon: String = "arrow.right.circle",
+            onTransferToOtherPane: ((RemoteFile) -> Void)? = nil,
+            onDropRemoteFiles: (([RemoteFile], PanePosition?) -> Void)? = nil
         ) {
-            self.viewModel      = viewModel
-            self.files          = files
-            self.onDoubleClick  = onDoubleClick
-            self.onGetInfo      = onGetInfo
-            self.onOpenEditor   = onOpenEditor
+            self.viewModel                = viewModel
+            self.files                    = files
+            self.onDoubleClick            = onDoubleClick
+            self.onGetInfo                = onGetInfo
+            self.onOpenEditor             = onOpenEditor
+            self.panePosition             = panePosition
+            self.transferToOtherPaneTitle = transferToOtherPaneTitle
+            self.transferToOtherPaneIcon  = transferToOtherPaneIcon
+            self.onTransferToOtherPane     = onTransferToOtherPane
+            self.onDropRemoteFiles        = onDropRemoteFiles
             filePromiseQueue.qualityOfService = .userInitiated
         }
 
@@ -410,10 +487,23 @@ struct NativeFileTableView: NSViewRepresentable {
 
         func outlineView(_ outlineView: NSOutlineView,
                          pasteboardWriterForItem item: Any) -> NSPasteboardWriting? {
-            guard let n = node(for: item), n.file.isFile else { return nil }
-            let provider = NSFilePromiseProvider(
-                fileType: UTType.data.identifier, delegate: self)
-            provider.userInfo = ["file": n.file]
+            guard let n = node(for: item) else { return nil }
+            let file = n.file
+
+            let utType = file.isDirectory ? UTType.folder.identifier : UTType.data.identifier
+            let provider = MacSCPFilePromiseProvider(fileType: utType, delegate: self)
+            provider.userInfo = ["file": file]
+
+            let payload = DraggedItemPayload(
+                sourcePosition: panePosition?.rawValue ?? "",
+                file: file
+            )
+            provider.payloadData = try? JSONEncoder().encode(payload)
+
+            if viewModel.isLocal {
+                provider.localURL = URL(fileURLWithPath: file.path)
+            }
+
             return provider
         }
 
@@ -422,7 +512,6 @@ struct NativeFileTableView: NSViewRepresentable {
                          willBeginAt screenPoint: NSPoint,
                          forItems draggedItems: [Any]) {
             draggedFiles = draggedItems.compactMap { ($0 as? FileTreeNode)?.file }
-                                       .filter { $0.isFile }
         }
 
         func outlineView(_ outlineView: NSOutlineView,
@@ -447,7 +536,16 @@ struct NativeFileTableView: NSViewRepresentable {
             }
             Task { @MainActor in
                 do {
-                    try await viewModel.downloadFileToURL(file, destinationURL: url)
+                    if file.isDirectory {
+                        try await RemoteStreamTransferEngine.transfer(
+                            file: file,
+                            from: viewModel.fileRepository,
+                            to: LocalFileRepository(),
+                            targetDirectory: url.deletingLastPathComponent().path
+                        )
+                    } else {
+                        try await viewModel.downloadFileToURL(file, destinationURL: url)
+                    }
                     completionHandler(nil)
                 } catch {
                     completionHandler(error)
@@ -459,18 +557,31 @@ struct NativeFileTableView: NSViewRepresentable {
             filePromiseQueue
         }
 
-        // MARK: - Drop IN (Upload)
+        // MARK: - Drop IN (Upload & Inter-Pane Transfer)
 
         func outlineView(_ outlineView: NSOutlineView,
                          validateDrop info: NSDraggingInfo,
                          proposedItem item: Any?,
                          proposedChildIndex index: Int) -> NSDragOperation {
+            // Do not drop onto the same outline view
+            if info.draggingSource as? NSOutlineView == outlineView {
+                return []
+            }
+
+            // Inter-pane drag (macSCPDragType)
+            if info.draggingPasteboard.types?.contains(NativeFileTableView.macSCPDragType) == true {
+                outlineView.setDropItem(nil, dropChildIndex: NSOutlineViewDropOnItemIndex)
+                return .copy
+            }
+
+            // Drop from Finder or external apps
             if info.draggingPasteboard.canReadObject(
                 forClasses: [NSURL.self],
                 options: [.urlReadingFileURLsOnly: true]) {
                 outlineView.setDropItem(nil, dropChildIndex: NSOutlineViewDropOnItemIndex)
                 return .copy
             }
+
             return []
         }
 
@@ -478,22 +589,48 @@ struct NativeFileTableView: NSViewRepresentable {
                          acceptDrop info: NSDraggingInfo,
                          item: Any?,
                          childIndex index: Int) -> Bool {
-            guard let urls = info.draggingPasteboard.readObjects(
-                    forClasses: [NSURL.self],
-                    options: [.urlReadingFileURLsOnly: true]) as? [URL]
-            else { return false }
+            let pb = info.draggingPasteboard
 
-            let valid = urls.filter { url in
-                var isDir: ObjCBool = false
-                return FileManager.default.fileExists(atPath: url.path,
-                                                      isDirectory: &isDir)
-            }
-            guard !valid.isEmpty else { return false }
+            // 1. Inter-pane drag within macSCP
+            if pb.types?.contains(NativeFileTableView.macSCPDragType) == true,
+               let items = pb.pasteboardItems {
+                var droppedFiles: [RemoteFile] = []
+                var sourcePosition: PanePosition?
 
-            Task { @MainActor in
-                await viewModel.uploadDroppedFiles(valid)
+                for pbItem in items {
+                    if let data = pbItem.data(forType: NativeFileTableView.macSCPDragType),
+                       let payload = try? JSONDecoder().decode(DraggedItemPayload.self, from: data) {
+                        droppedFiles.append(payload.file)
+                        if sourcePosition == nil, let pos = PanePosition(rawValue: payload.sourcePosition) {
+                            sourcePosition = pos
+                        }
+                    }
+                }
+
+                if !droppedFiles.isEmpty {
+                    onDropRemoteFiles?(droppedFiles, sourcePosition)
+                    return true
+                }
             }
-            return true
+
+            // 2. Drop from Finder or external apps
+            if let urls = pb.readObjects(
+                forClasses: [NSURL.self],
+                options: [.urlReadingFileURLsOnly: true]) as? [URL] {
+                let valid = urls.filter { url in
+                    var isDir: ObjCBool = false
+                    return FileManager.default.fileExists(atPath: url.path,
+                                                          isDirectory: &isDir)
+                }
+                guard !valid.isEmpty else { return false }
+
+                Task { @MainActor in
+                    await viewModel.uploadDroppedFiles(valid)
+                }
+                return true
+            }
+
+            return false
         }
     }
 }
@@ -538,6 +675,13 @@ extension NativeFileTableView.Coordinator {
         addItem(menu, title: "Cut",    action: #selector(handleCut(_:)),    image: "scissors",             object: file)
         if viewModel.canPaste {
             addItem(menu, title: "Paste", action: #selector(handlePaste(_:)), image: "doc.on.clipboard", object: file)
+        }
+        if let transferTitle = transferToOtherPaneTitle, onTransferToOtherPane != nil {
+            menu.addItem(.separator())
+            addItem(menu, title: transferTitle,
+                    action: #selector(handleTransferToOtherPane(_:)),
+                    image: transferToOtherPaneIcon,
+                    object: file)
         }
         menu.addItem(.separator())
         addItem(menu, title: "Rename",   action: #selector(handleRename(_:)),   image: "pencil",        object: file)
@@ -585,6 +729,13 @@ extension NativeFileTableView.Coordinator {
     }
     @objc func handlePaste(_ s: NSMenuItem) {
         Task { @MainActor in await viewModel.paste() }
+    }
+    @objc func handleTransferToOtherPane(_ s: NSMenuItem) {
+        guard let f = s.representedObject as? RemoteFile else { return }
+        if !viewModel.selectedFiles.contains(f.id) {
+            viewModel.selectedFiles = [f.id]
+        }
+        onTransferToOtherPane?(f)
     }
     @objc func handleRename(_ s: NSMenuItem) {
         (s.representedObject as? RemoteFile).map { viewModel.startRename($0) }

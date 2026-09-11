@@ -85,4 +85,20 @@ protocol S3SessionProtocol: Sendable {
 
     /// Build a presigned object URL valid for the given duration
     func presignedURL(for path: String, expiresIn: TimeInterval) async throws -> URL
+
+    /// Opens a stream reader for an S3 object
+    func openStreamReader(at path: String) async throws -> FileStreamReader
+
+    /// Writes stream to an S3 object
+    func writeStream(from reader: FileStreamReader, to path: String, totalSize: Int64?, progress: TransferProgressHandler?) async throws
+}
+
+extension S3SessionProtocol {
+    func openStreamReader(at path: String) async throws -> FileStreamReader {
+        throw AppError.s3OperationFailed("Streaming not supported")
+    }
+
+    func writeStream(from reader: FileStreamReader, to path: String, totalSize: Int64?, progress: TransferProgressHandler?) async throws {
+        throw AppError.s3OperationFailed("Streaming not supported")
+    }
 }

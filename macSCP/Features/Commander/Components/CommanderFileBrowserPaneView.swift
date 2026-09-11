@@ -102,7 +102,16 @@ struct CommanderFileBrowserPaneView: View {
                         viewModel: viewModel,
                         files: viewModel.sortedFiles,
                         onOpenEditor: openFileInEditor,
-                        onGetInfo: showFileInfo
+                        onGetInfo: showFileInfo,
+                        panePosition: pane.position,
+                        transferToOtherPaneTitle: canTransferToOpposite ? transferTitle : nil,
+                        transferToOtherPaneIcon: transferIcon,
+                        onTransferToOtherPane: { file in
+                            handleTransferToOppositePane(file)
+                        },
+                        onDropRemoteFiles: { files, sourcePos in
+                            handleDropRemoteFiles(files, sourcePos: sourcePos)
+                        }
                     )
                     .frame(minWidth: 280, maxWidth: .infinity)
 
@@ -217,5 +226,37 @@ struct CommanderFileBrowserPaneView: View {
 
     private func showFileInfo(_ file: RemoteFile) {
         viewModel.showFileInfo(file)
+    }
+
+    // MARK: - Transfer to Opposite Pane
+
+    private var canTransferToOpposite: Bool {
+        commanderViewModel.pane(for: pane.position.other).browserViewModel != nil
+    }
+
+    private var transferTitle: String {
+        let otherPane = commanderViewModel.pane(for: pane.position.other)
+        return "Transfer to \(otherPane.contentType.title)"
+    }
+
+    private var transferIcon: String {
+        pane.position == .left ? "arrow.right.circle" : "arrow.left.circle"
+    }
+
+    private func handleTransferToOppositePane(_ file: RemoteFile) {
+        let selected = viewModel.selectedFilesList
+        let filesToTransfer: [RemoteFile]
+        if selected.contains(where: { $0.id == file.id }) {
+            filesToTransfer = selected
+        } else {
+            filesToTransfer = [file]
+        }
+        commanderViewModel.transfer(files: filesToTransfer, from: pane.position, to: pane.position.other)
+    }
+
+    private func handleDropRemoteFiles(_ files: [RemoteFile], sourcePos: PanePosition?) {
+        let src = sourcePos ?? pane.position.other
+        guard src != pane.position else { return }
+        commanderViewModel.transfer(files: files, from: src, to: pane.position)
     }
 }

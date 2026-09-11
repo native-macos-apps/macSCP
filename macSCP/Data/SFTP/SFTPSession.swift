@@ -429,6 +429,58 @@ actor SFTPSession: SFTPSessionProtocol {
         return try await client.realPath(at: path)
     }
 
+    func openStreamReader(at path: String) async throws -> FileStreamReader {
+        guard let client = client else { throw AppError.notConnected }
+        do {
+            let handle = try await client.openFile(path: path, flags: [.read])
+            return SFTPStreamReader(client: client, handle: handle)
+        } catch {
+            throw parseError(error)
+        }
+    }
+
+    func writeStream(from reader: FileStreamReader, to path: String, totalSize: Int64?, progress: TransferProgressHandler?) async throws {
+        guard let client = client else { throw AppError.notConnected }
+
+        do {
+            let handle: ByteBuffer
+            if let size = totalSize, size >= 0 {
+                handle = try await client.openFile(
+                    path: path,
+                    flags: [.write, .creat, .trunc],
+                    attributes: .init(size: UInt64(size))
+                )
+            } else {
+                handle = try await client.openFile(path: path, flags: [.write, .creat, .trunc])
+            }
+
+            var closed = false
+            defer {
+                if !closed {
+                    Task { try? await client.closeHandle(handle) }
+                }
+            }
+
+            var offset: UInt64 = 0
+            progress?(0)
+
+            while let chunk = try await reader.readNextChunk(), !chunk.isEmpty {
+                try Task.checkCancellation()
+                var buffer = ByteBufferAllocator().buffer(capacity: chunk.count)
+                buffer.writeBytes(chunk)
+                try await client.write(handle: handle, offset: offset, data: buffer)
+                offset += UInt64(chunk.count)
+                progress?(Int64(offset))
+            }
+
+            try await client.closeHandle(handle)
+            closed = true
+            logInfo("Stream write completed: \(path) (\(offset) bytes)", category: .sftp)
+        } catch {
+            throw parseError(error)
+        }
+    }
+
     func executeCommand(_ command: String) async throws -> String {
         guard let connection = connection else { throw AppError.notConnected }
         return try await connection.executeCommand(command)
@@ -491,5 +543,38 @@ actor SFTPSession: SFTPSessionProtocol {
         }
 
         return .connectionFailed(error.localizedDescription)
+    }
+}
+
+// MARK: - SFTPStreamReader
+
+final class SFTPStreamReader: FileStreamReader, @unchecked Sendable {
+    private let client: SFTPClient
+    private let handle: ByteBuffer
+    private var offset: UInt64 = 0
+    private let chunkSize: UInt32
+    private var isClosed = false
+
+    init(client: SFTPClient, handle: ByteBuffer, chunkSize: UInt32 = 64 * 1024) {
+        self.client = client
+        self.handle = handle
+        self.chunkSize = chunkSize
+    }
+
+    func readNextChunk() async throws -> Data? {
+        guard !isClosed else { return nil }
+        guard let buffer = try await client.read(handle: handle, offset: offset, length: chunkSize) else {
+            return nil
+        }
+        let data = Data(buffer: buffer)
+        if data.isEmpty { return nil }
+        offset += UInt64(data.count)
+        return data
+    }
+
+    func close() async {
+        guard !isClosed else { return }
+        isClosed = true
+        try? await client.closeHandle(handle)
     }
 }

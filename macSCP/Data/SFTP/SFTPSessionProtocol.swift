@@ -91,4 +91,20 @@ protocol SFTPSessionProtocol: Sendable {
 
     /// Execute a shell command
     func executeCommand(_ command: String) async throws -> String
+
+    /// Opens a stream reader for remote file
+    func openStreamReader(at path: String) async throws -> FileStreamReader
+
+    /// Writes stream to remote file
+    func writeStream(from reader: FileStreamReader, to path: String, totalSize: Int64?, progress: TransferProgressHandler?) async throws
+}
+
+extension SFTPSessionProtocol {
+    func openStreamReader(at path: String) async throws -> FileStreamReader {
+        throw AppError.sftpOperationFailed("Streaming not supported")
+    }
+
+    func writeStream(from reader: FileStreamReader, to path: String, totalSize: Int64?, progress: TransferProgressHandler?) async throws {
+        throw AppError.sftpOperationFailed("Streaming not supported")
+    }
 }

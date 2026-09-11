@@ -12,6 +12,11 @@ struct FileListView: View {
     let files: [RemoteFile]
     let onOpenEditor: (RemoteFile) -> Void
     let onGetInfo: (RemoteFile) -> Void
+    var panePosition: PanePosition? = nil
+    var transferToOtherPaneTitle: String? = nil
+    var transferToOtherPaneIcon: String = "arrow.right.circle"
+    var onTransferToOtherPane: ((RemoteFile) -> Void)? = nil
+    var onDropRemoteFiles: (([RemoteFile], PanePosition?) -> Void)? = nil
 
     var body: some View {
         NativeFileTableView(
@@ -19,7 +24,12 @@ struct FileListView: View {
             files: files,
             onDoubleClick: handleDoubleClick,
             onGetInfo: onGetInfo,
-            onOpenEditor: onOpenEditor
+            onOpenEditor: onOpenEditor,
+            panePosition: panePosition,
+            transferToOtherPaneTitle: transferToOtherPaneTitle,
+            transferToOtherPaneIcon: transferToOtherPaneIcon,
+            onTransferToOtherPane: onTransferToOtherPane,
+            onDropRemoteFiles: onDropRemoteFiles
         )
     }
 

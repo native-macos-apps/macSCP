@@ -10,6 +10,7 @@ import SwiftUI
 struct CommanderWorkspaceView: View {
     @State private var viewModel: CommanderViewModel
     @State private var newFolderName = ""
+    @State private var renameFolderName = ""
 
     init(container: DependencyContainer) {
         self._viewModel = State(initialValue: CommanderViewModel(container: container))
@@ -193,6 +194,32 @@ struct CommanderWorkspaceView: View {
         } message: {
             if let folder = viewModel.connectionListViewModel.folderToDelete {
                 Text("Are you sure you want to delete \"\(folder.name)\"? Connections inside this folder will not be deleted.")
+            }
+        }
+        // Rename Folder Alert
+        .alert("Rename Folder", isPresented: $viewModel.connectionListViewModel.isShowingRenameFolderAlert) {
+            TextField("Folder name", text: $renameFolderName)
+            Button("Rename") {
+                let name = renameFolderName.trimmed
+                if !name.isEmpty, let folder = viewModel.connectionListViewModel.folderToRename {
+                    Task { await viewModel.connectionListViewModel.renameFolder(folder, to: name) }
+                }
+                viewModel.connectionListViewModel.cancelRenameFolder()
+                renameFolderName = ""
+            }
+            .keyboardShortcut(.defaultAction)
+            Button("Cancel", role: .cancel) {
+                viewModel.connectionListViewModel.cancelRenameFolder()
+                renameFolderName = ""
+            }
+        } message: {
+            Text("Enter a new name for the folder.")
+        }
+        .onChange(of: viewModel.connectionListViewModel.isShowingRenameFolderAlert) { _, isShowing in
+            if isShowing, let folder = viewModel.connectionListViewModel.folderToRename {
+                renameFolderName = folder.name
+            } else if !isShowing {
+                renameFolderName = ""
             }
         }
         .errorAlert($viewModel.error)

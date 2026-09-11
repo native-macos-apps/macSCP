@@ -50,6 +50,7 @@ final class MockFileRepository: FileRepositoryProtocol, @unchecked Sendable {
     var mockFileInfo: RemoteFile?
     var mockFileContent: String = ""
     var mockRealPath: String = "/"
+    var mockDirectoryContents: [String: [RemoteFile]] = [:]
     var mockError: Error?
 
     // MARK: - Protocol Implementation
@@ -58,6 +59,9 @@ final class MockFileRepository: FileRepositoryProtocol, @unchecked Sendable {
         listFilesCalled = true
         lastListPath = path
         if let error = mockError { throw error }
+        if let contents = mockDirectoryContents[path] {
+            return contents
+        }
         return mockFiles
     }
 
@@ -159,6 +163,36 @@ final class MockFileRepository: FileRepositoryProtocol, @unchecked Sendable {
         return mockRealPath
     }
 
+    // MARK: - Streaming
+    var openStreamReaderCalled = false
+    var writeStreamCalled = false
+    var lastStreamReadPath: String?
+    var lastStreamWritePath: String?
+    var mockStreamData: [String: Data] = [:]
+    var writtenStreamData: [String: Data] = [:]
+
+    func openStreamReader(at path: String) async throws -> FileStreamReader {
+        openStreamReaderCalled = true
+        lastStreamReadPath = path
+        if let error = mockError { throw error }
+        let data = mockStreamData[path] ?? mockFileContent.data(using: .utf8) ?? Data()
+        return MemoryStreamReader(data: data)
+    }
+
+    func writeStream(from reader: FileStreamReader, to path: String, totalSize: Int64?, progress: TransferProgressHandler?) async throws {
+        writeStreamCalled = true
+        lastStreamWritePath = path
+        if let error = mockError { throw error }
+
+        var allData = Data()
+        while let chunk = try await reader.readNextChunk(), !chunk.isEmpty {
+            try Task.checkCancellation()
+            allData.append(chunk)
+            progress?(Int64(allData.count))
+        }
+        writtenStreamData[path] = allData
+    }
+
     // MARK: - Reset
     func reset() {
         listFilesCalled = false
@@ -174,6 +208,8 @@ final class MockFileRepository: FileRepositoryProtocol, @unchecked Sendable {
         readFileContentCalled = false
         writeFileContentCalled = false
         getRealPathCalled = false
+        openStreamReaderCalled = false
+        writeStreamCalled = false
 
         lastListPath = nil
         lastFileInfoPath = nil
@@ -194,11 +230,15 @@ final class MockFileRepository: FileRepositoryProtocol, @unchecked Sendable {
         lastWritePath = nil
         lastWriteContent = nil
         lastRealPath = nil
+        lastStreamReadPath = nil
+        lastStreamWritePath = nil
 
         mockFiles = []
         mockFileInfo = nil
         mockFileContent = ""
         mockRealPath = "/"
+        mockStreamData = [:]
+        writtenStreamData = [:]
         mockError = nil
     }
 }

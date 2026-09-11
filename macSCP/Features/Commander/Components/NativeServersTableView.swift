@@ -60,6 +60,7 @@ struct NativeServersTableView: NSViewRepresentable {
     let onDelete: (Connection) -> Void
     let onMove: (Connection, Folder?) -> Void
     let onDeleteFolder: (Folder) -> Void
+    let onRenameFolder: (Folder) -> Void
     let onNewConnection: () -> Void
     let onNewFolder: () -> Void
 
@@ -388,6 +389,14 @@ extension NativeServersTableView {
                 menu.addItem(deleteItem)
 
             case .folder(let folder):
+                let renameFolderItem = NSMenuItem(title: "Rename…", action: #selector(handleRenameFolder(_:)), keyEquivalent: "")
+                renameFolderItem.image = NSImage(systemSymbolName: "pencil", accessibilityDescription: nil)
+                renameFolderItem.target = self
+                renameFolderItem.representedObject = folder
+                menu.addItem(renameFolderItem)
+
+                menu.addItem(.separator())
+
                 let deleteFolderItem = NSMenuItem(title: "Delete Folder", action: #selector(handleDeleteFolder(_:)), keyEquivalent: "")
                 deleteFolderItem.image = NSImage(systemSymbolName: "trash", accessibilityDescription: nil)
                 deleteFolderItem.target = self
@@ -461,6 +470,11 @@ extension NativeServersTableView {
         @objc private func handleDeleteFolder(_ sender: NSMenuItem) {
             guard let folder = sender.representedObject as? Folder else { return }
             parent.onDeleteFolder(folder)
+        }
+
+        @objc private func handleRenameFolder(_ sender: NSMenuItem) {
+            guard let folder = sender.representedObject as? Folder else { return }
+            parent.onRenameFolder(folder)
         }
 
         @objc private func handleNewConnection(_ sender: NSMenuItem) {

@@ -8,12 +8,94 @@
 import Foundation
 import NIOCore
 
+private final class SFTPClientState: @unchecked Sendable {
+    private let lock = NSLock()
+    private(set) var isClosed = false
+    private var pendingRequests: [UInt32: CheckedContinuation<SFTPResponse, Error>] = [:]
+    private var initContinuation: CheckedContinuation<SFTPResponse, Error>?
+
+    func registerInit(continuation: CheckedContinuation<SFTPResponse, Error>) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !isClosed else {
+            throw SFTPClientError.connectionClosed
+        }
+        self.initContinuation = continuation
+    }
+
+    func registerRequest(id: UInt32, continuation: CheckedContinuation<SFTPResponse, Error>) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !isClosed else {
+            throw SFTPClientError.connectionClosed
+        }
+        pendingRequests[id] = continuation
+    }
+
+    func resumeResponse(_ response: SFTPResponse) {
+        lock.lock()
+        if case .version = response {
+            let cont = initContinuation
+            initContinuation = nil
+            lock.unlock()
+            cont?.resume(returning: response)
+            return
+        }
+
+        guard let reqId = response.requestId, let continuation = pendingRequests.removeValue(forKey: reqId) else {
+            lock.unlock()
+            return
+        }
+        lock.unlock()
+        continuation.resume(returning: response)
+    }
+
+    func failRequest(id: UInt32, error: Error) {
+        lock.lock()
+        guard let continuation = pendingRequests.removeValue(forKey: id) else {
+            lock.unlock()
+            return
+        }
+        lock.unlock()
+        continuation.resume(throwing: error)
+    }
+
+    func failInit(error: Error) {
+        lock.lock()
+        guard let cont = initContinuation else {
+            lock.unlock()
+            return
+        }
+        initContinuation = nil
+        lock.unlock()
+        cont.resume(throwing: error)
+    }
+
+    func close(error: Error?) {
+        lock.lock()
+        guard !isClosed else {
+            lock.unlock()
+            return
+        }
+        isClosed = true
+        let finalError = error ?? SFTPClientError.connectionClosed
+        let cont = initContinuation
+        initContinuation = nil
+        let currentRequests = pendingRequests
+        pendingRequests.removeAll()
+        lock.unlock()
+
+        cont?.resume(throwing: finalError)
+        for (_, continuation) in currentRequests {
+            continuation.resume(throwing: finalError)
+        }
+    }
+}
+
 actor SFTPClient: SFTPChannelHandlerDelegate {
     private let channel: Channel
     private var nextRequestId: UInt32 = 1
-    private var pendingRequests: [UInt32: CheckedContinuation<SFTPResponse, Error>] = [:]
-    private var initContinuation: CheckedContinuation<SFTPResponse, Error>?
-    private var isClosed = false
+    private let state = SFTPClientState()
 
     init(channel: Channel) {
         self.channel = channel
@@ -22,47 +104,11 @@ actor SFTPClient: SFTPChannelHandlerDelegate {
     // MARK: - Delegate Callbacks
 
     nonisolated func sftpChannelHandler(_ handler: SFTPChannelHandler, didReceiveResponse response: SFTPResponse) {
-        Task {
-            await self.handleResponse(response)
-        }
+        state.resumeResponse(response)
     }
 
     nonisolated func sftpChannelHandler(_ handler: SFTPChannelHandler, didCloseWithError error: Error?) {
-        Task {
-            await self.handleClose(error: error)
-        }
-    }
-
-    private func handleResponse(_ response: SFTPResponse) {
-        if case .version = response {
-            if let cont = initContinuation {
-                initContinuation = nil
-                cont.resume(returning: response)
-            }
-            return
-        }
-
-        guard let reqId = response.requestId, let continuation = pendingRequests.removeValue(forKey: reqId) else {
-            return
-        }
-
-        continuation.resume(returning: response)
-    }
-
-    private func handleClose(error: Error?) {
-        isClosed = true
-        let finalError = error ?? SFTPClientError.connectionClosed
-
-        if let cont = initContinuation {
-            initContinuation = nil
-            cont.resume(throwing: finalError)
-        }
-
-        let currentRequests = pendingRequests
-        pendingRequests.removeAll()
-        for (_, continuation) in currentRequests {
-            continuation.resume(throwing: finalError)
-        }
+        state.close(error: error)
     }
 
     // MARK: - Request Execution
@@ -73,24 +119,68 @@ actor SFTPClient: SFTPChannelHandlerDelegate {
         return id
     }
 
-    private func sendRequest(_ packet: ByteBuffer, requestId: UInt32) async throws -> SFTPResponse {
-        guard !isClosed else {
+    private func sendRequest(_ packet: ByteBuffer, requestId: UInt32, timeoutSeconds: TimeInterval = 30) async throws -> SFTPResponse {
+        guard !state.isClosed else {
             throw SFTPClientError.connectionClosed
         }
 
-        return try await withCheckedThrowingContinuation { continuation in
-            pendingRequests[requestId] = continuation
-            channel.writeAndFlush(packet, promise: nil)
+        let promise = channel.eventLoop.makePromise(of: Void.self)
+        let stateRef = self.state
+
+        promise.futureResult.whenFailure { error in
+            stateRef.failRequest(id: requestId, error: error)
+        }
+
+        let timeoutTask = channel.eventLoop.scheduleTask(in: .seconds(Int64(timeoutSeconds))) {
+            stateRef.failRequest(id: requestId, error: SFTPClientError.timeout)
+        }
+
+        do {
+            let response = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<SFTPResponse, Error>) in
+                do {
+                    try state.registerRequest(id: requestId, continuation: continuation)
+                    channel.writeAndFlush(packet, promise: promise)
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+            timeoutTask.cancel()
+            return response
+        } catch {
+            timeoutTask.cancel()
+            throw error
         }
     }
 
     // MARK: - Core Operations
 
-    func initialize() async throws {
+    func initialize(timeoutSeconds: TimeInterval = 15) async throws {
         let packet = SFTPRequestBuilder.buildInit(version: 3)
-        let response: SFTPResponse = try await withCheckedThrowingContinuation { continuation in
-            self.initContinuation = continuation
-            channel.writeAndFlush(packet, promise: nil)
+        let promise = channel.eventLoop.makePromise(of: Void.self)
+        let stateRef = self.state
+
+        promise.futureResult.whenFailure { error in
+            stateRef.failInit(error: error)
+        }
+
+        let timeoutTask = channel.eventLoop.scheduleTask(in: .seconds(Int64(timeoutSeconds))) {
+            stateRef.failInit(error: SFTPClientError.timeout)
+        }
+
+        let response: SFTPResponse
+        do {
+            response = try await withCheckedThrowingContinuation { continuation in
+                do {
+                    try state.registerInit(continuation: continuation)
+                    channel.writeAndFlush(packet, promise: promise)
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+            timeoutTask.cancel()
+        } catch {
+            timeoutTask.cancel()
+            throw error
         }
 
         guard case .version(let version, _) = response else {
@@ -332,8 +422,8 @@ actor SFTPClient: SFTPChannelHandlerDelegate {
     }
 
     func close() async {
-        guard !isClosed else { return }
-        isClosed = true
+        guard !state.isClosed else { return }
+        state.close(error: nil)
         channel.close(promise: nil)
     }
 }

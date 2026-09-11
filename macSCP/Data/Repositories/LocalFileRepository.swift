@@ -253,4 +253,68 @@ final class LocalFileRepository: FileRepositoryProtocol, @unchecked Sendable {
         str += triplet(other)
         return str
     }
+
+    // MARK: - Streaming
+
+    func openStreamReader(at path: String) async throws -> FileStreamReader {
+        let resolved = resolvePath(path)
+        let url = URL(fileURLWithPath: resolved)
+        guard fileManager.fileExists(atPath: resolved) else {
+            throw AppError.fileNotFound
+        }
+        let handle = try FileHandle(forReadingFrom: url)
+        return LocalFileStreamReader(fileHandle: handle)
+    }
+
+    func writeStream(from reader: FileStreamReader, to path: String, totalSize: Int64?, progress: TransferProgressHandler?) async throws {
+        let resolved = resolvePath(path)
+        let url = URL(fileURLWithPath: resolved)
+        let parentDir = url.deletingLastPathComponent()
+        try fileManager.createDirectory(at: parentDir, withIntermediateDirectories: true)
+
+        if fileManager.fileExists(atPath: resolved) {
+            try? fileManager.removeItem(at: url)
+        }
+        fileManager.createFile(atPath: resolved, contents: nil)
+
+        let handle = try FileHandle(forWritingTo: url)
+        defer { try? handle.close() }
+
+        var totalWritten: Int64 = 0
+        progress?(0)
+
+        while let chunk = try await reader.readNextChunk(), !chunk.isEmpty {
+            try Task.checkCancellation()
+            try handle.write(contentsOf: chunk)
+            totalWritten += Int64(chunk.count)
+            progress?(totalWritten)
+        }
+    }
+}
+
+// MARK: - LocalFileStreamReader
+
+final class LocalFileStreamReader: FileStreamReader, @unchecked Sendable {
+    private let fileHandle: FileHandle
+    private let chunkSize: Int
+    private var isClosed = false
+
+    init(fileHandle: FileHandle, chunkSize: Int = 64 * 1024) {
+        self.fileHandle = fileHandle
+        self.chunkSize = chunkSize
+    }
+
+    func readNextChunk() async throws -> Data? {
+        guard !isClosed else { return nil }
+        guard let chunk = try fileHandle.read(upToCount: chunkSize), !chunk.isEmpty else {
+            return nil
+        }
+        return chunk
+    }
+
+    func close() async {
+        guard !isClosed else { return }
+        isClosed = true
+        try? fileHandle.close()
+    }
 }

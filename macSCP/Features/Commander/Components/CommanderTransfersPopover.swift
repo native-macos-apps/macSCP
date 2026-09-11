@@ -15,7 +15,14 @@ struct CommanderTransfersPopover: View {
             header
             Divider()
 
-            if viewModel.allActiveTransfers.isEmpty && viewModel.allRecentTransfers.isEmpty {
+            if let batch = viewModel.currentActiveBatch, batch.isInProgress {
+                BatchTransferHeaderView(batch: batch) {
+                    viewModel.cancelBatch()
+                }
+                Divider()
+            }
+
+            if viewModel.allActiveTransfers.isEmpty && viewModel.allRecentTransfers.isEmpty && viewModel.currentActiveBatch == nil {
                 emptyState
             } else {
                 ScrollView {
@@ -51,18 +58,16 @@ struct CommanderTransfersPopover: View {
 
             if viewModel.hasActiveTransfers {
                 Button("Cancel All") {
-                    viewModel.leftPane.browserViewModel?.cancelAllTransfers()
-                    viewModel.rightPane.browserViewModel?.cancelAllTransfers()
+                    viewModel.cancelBatch()
                 }
                 .buttonStyle(.plain)
                 .font(.system(size: 12))
                 .foregroundStyle(.red)
             }
 
-            if !viewModel.allRecentTransfers.isEmpty {
+            if !viewModel.allRecentTransfers.isEmpty || (viewModel.currentActiveBatch != nil && !(viewModel.currentActiveBatch?.isInProgress ?? false)) {
                 Button("Clear") {
-                    viewModel.leftPane.browserViewModel?.clearCompletedTransfers()
-                    viewModel.rightPane.browserViewModel?.clearCompletedTransfers()
+                    viewModel.clearCompletedTransfers()
                 }
                 .buttonStyle(.plain)
                 .font(.system(size: 12))
@@ -93,7 +98,6 @@ struct CommanderTransfersPopover: View {
     }
 
     private func removeTransfer(_ transfer: TransferProgress) {
-        viewModel.leftPane.browserViewModel?.removeTransfer(transfer)
-        viewModel.rightPane.browserViewModel?.removeTransfer(transfer)
+        viewModel.removeTransfer(transfer)
     }
 }
