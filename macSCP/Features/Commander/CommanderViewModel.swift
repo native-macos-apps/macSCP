@@ -473,11 +473,13 @@ final class CommanderViewModel {
         let totalFilesCount = itemsToTransfer.count
         let totalBytesSum = itemsToTransfer.reduce(0) { $0 + $1.sourceFile.size }
 
+        let batchId = UUID()
         if topLevelDirectoryNames.count > 0 || itemsToTransfer.count > 1 {
             let title = topLevelDirectoryNames.count == 1
                 ? "Transferring \"\(topLevelDirectoryNames[0])\""
                 : "Transferring \(totalFilesCount) files"
             self.activeBatch = BatchTransferProgress(
+                id: batchId,
                 title: title,
                 totalFiles: totalFilesCount,
                 totalBytes: totalBytesSum
@@ -504,6 +506,7 @@ final class CommanderViewModel {
         }
 
         let tracker = BatchProgressTracker(
+            batchId: batchId,
             totalFiles: itemsToTransfer.count,
             totalBytes: totalBytesSum,
             initialRecent: targetVM.recentTransfers
@@ -542,7 +545,7 @@ final class CommanderViewModel {
 
         let finalSnapshot = tracker.drainFinal(isCancelled: self.isBatchCancelled)
         self.applyBatchSnapshot(finalSnapshot, targetVM: targetVM)
-        if var batch = self.activeBatch, batch.isInProgress {
+        if var batch = self.activeBatch, batch.id == batchId, batch.isInProgress {
             batch.status = self.isBatchCancelled ? .cancelled : .completed
             self.activeBatch = batch
         }
@@ -552,12 +555,15 @@ final class CommanderViewModel {
     /// Applies an atomic throttled snapshot from BatchProgressTracker to target FileBrowserViewModel and activeBatch
     func applyBatchSnapshot(_ snapshot: BatchProgressSnapshot, targetVM: FileBrowserViewModel) {
         targetVM.applyBatchSnapshot(snapshot)
-        if var batch = self.activeBatch {
-            batch.completedFiles = snapshot.completedFiles
-            batch.completedBytes = snapshot.completedBytes
-            batch.transferredBytes = snapshot.transferredBytes
-            self.activeBatch = batch
+        guard let batch = self.activeBatch, batch.id == snapshot.batchId else { return }
+        var updatedBatch = batch
+        updatedBatch.completedFiles = snapshot.completedFiles
+        updatedBatch.completedBytes = snapshot.completedBytes
+        updatedBatch.transferredBytes = snapshot.transferredBytes
+        if snapshot.isFinal {
+            updatedBatch.status = self.isBatchCancelled ? .cancelled : .completed
         }
+        self.activeBatch = updatedBatch
     }
 
     nonisolated private static func processBatchTransfer(

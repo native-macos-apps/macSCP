@@ -11,8 +11,8 @@ import NIOCore
 import NIOFoundationCompat
 
 final class SFTPTransferEngine: Sendable {
-    nonisolated static let defaultChunkSize: UInt32 = 64 * 1024 // 64 KB per chunk
-    nonisolated static let defaultWindowSize: Int = 6           // 6 in-flight chunks = 384 KB window per stream, optimal for concurrent transfers without channel saturation
+    nonisolated static let defaultChunkSize: UInt32 = 32 * 1024 // 32 KB per chunk, standard SFTP packet size avoiding SSH channel fragmentation
+    nonisolated static let defaultWindowSize: Int = 6           // 6 in-flight chunks = 192 KB window per stream, optimal for concurrent transfers without channel saturation
 
     // MARK: - Download
 
@@ -112,9 +112,9 @@ final class SFTPTransferEngine: Sendable {
         // Open remote file for reading
         let handle = try await client.openFile(path: remotePath, flags: [.read])
 
-        var closedRemote = false
+        var needsRemoteClose = true
         defer {
-            if !closedRemote {
+            if needsRemoteClose {
                 Task {
                     try? await client.closeHandle(handle)
                 }
@@ -132,8 +132,8 @@ final class SFTPTransferEngine: Sendable {
         // If file is empty, we are done
         guard fileSize > 0 else {
             progress?(0)
+            needsRemoteClose = false
             try await client.closeHandle(handle)
-            closedRemote = true
             return
         }
 
@@ -144,8 +144,8 @@ final class SFTPTransferEngine: Sendable {
                 try fileHandle.write(contentsOf: chunkData)
                 progress?(Int64(chunkData.count))
             }
+            needsRemoteClose = false
             try await client.closeHandle(handle)
-            closedRemote = true
             return
         }
 
@@ -198,8 +198,8 @@ final class SFTPTransferEngine: Sendable {
             }
         }
 
+        needsRemoteClose = false
         try await client.closeHandle(handle)
-        closedRemote = true
     }
 
     // MARK: - Upload
@@ -318,12 +318,12 @@ final class SFTPTransferEngine: Sendable {
         let handle = try await client.openFile(
             path: remotePath,
             flags: [.write, .creat, .trunc],
-            attributes: .init(size: fileSize)
+            attributes: .init()
         )
 
-        var closedRemote = false
+        var needsRemoteClose = true
         defer {
-            if !closedRemote {
+            if needsRemoteClose {
                 Task {
                     try? await client.closeHandle(handle)
                 }
@@ -332,8 +332,8 @@ final class SFTPTransferEngine: Sendable {
 
         guard fileSize > 0 else {
             progress?(0)
+            needsRemoteClose = false
             try await client.closeHandle(handle)
-            closedRemote = true
             return
         }
 
@@ -346,8 +346,8 @@ final class SFTPTransferEngine: Sendable {
                 try await client.write(handle: handle, offset: 0, data: buffer)
                 progress?(Int64(data.count))
             }
+            needsRemoteClose = false
             try await client.closeHandle(handle)
-            closedRemote = true
             return
         }
 
@@ -401,7 +401,7 @@ final class SFTPTransferEngine: Sendable {
             }
         }
 
+        needsRemoteClose = false
         try await client.closeHandle(handle)
-        closedRemote = true
     }
 }

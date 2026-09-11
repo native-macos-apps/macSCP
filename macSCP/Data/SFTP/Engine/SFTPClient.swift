@@ -50,6 +50,27 @@ private final class SFTPClientState: @unchecked Sendable {
         continuation.resume(returning: response)
     }
 
+    func failRequest(id: UInt32, error: Error) {
+        lock.lock()
+        guard let continuation = pendingRequests.removeValue(forKey: id) else {
+            lock.unlock()
+            return
+        }
+        lock.unlock()
+        continuation.resume(throwing: error)
+    }
+
+    func failInit(error: Error) {
+        lock.lock()
+        guard let cont = initContinuation else {
+            lock.unlock()
+            return
+        }
+        initContinuation = nil
+        lock.unlock()
+        cont.resume(throwing: error)
+    }
+
     func close(error: Error?) {
         lock.lock()
         guard !isClosed else {
@@ -98,32 +119,68 @@ actor SFTPClient: SFTPChannelHandlerDelegate {
         return id
     }
 
-    private func sendRequest(_ packet: ByteBuffer, requestId: UInt32) async throws -> SFTPResponse {
+    private func sendRequest(_ packet: ByteBuffer, requestId: UInt32, timeoutSeconds: TimeInterval = 30) async throws -> SFTPResponse {
         guard !state.isClosed else {
             throw SFTPClientError.connectionClosed
         }
 
-        return try await withCheckedThrowingContinuation { continuation in
-            do {
-                try state.registerRequest(id: requestId, continuation: continuation)
-                channel.writeAndFlush(packet, promise: nil)
-            } catch {
-                continuation.resume(throwing: error)
+        let promise = channel.eventLoop.makePromise(of: Void.self)
+        let stateRef = self.state
+
+        promise.futureResult.whenFailure { error in
+            stateRef.failRequest(id: requestId, error: error)
+        }
+
+        let timeoutTask = channel.eventLoop.scheduleTask(in: .seconds(Int64(timeoutSeconds))) {
+            stateRef.failRequest(id: requestId, error: SFTPClientError.timeout)
+        }
+
+        do {
+            let response = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<SFTPResponse, Error>) in
+                do {
+                    try state.registerRequest(id: requestId, continuation: continuation)
+                    channel.writeAndFlush(packet, promise: promise)
+                } catch {
+                    continuation.resume(throwing: error)
+                }
             }
+            timeoutTask.cancel()
+            return response
+        } catch {
+            timeoutTask.cancel()
+            throw error
         }
     }
 
     // MARK: - Core Operations
 
-    func initialize() async throws {
+    func initialize(timeoutSeconds: TimeInterval = 15) async throws {
         let packet = SFTPRequestBuilder.buildInit(version: 3)
-        let response: SFTPResponse = try await withCheckedThrowingContinuation { continuation in
-            do {
-                try state.registerInit(continuation: continuation)
-                channel.writeAndFlush(packet, promise: nil)
-            } catch {
-                continuation.resume(throwing: error)
+        let promise = channel.eventLoop.makePromise(of: Void.self)
+        let stateRef = self.state
+
+        promise.futureResult.whenFailure { error in
+            stateRef.failInit(error: error)
+        }
+
+        let timeoutTask = channel.eventLoop.scheduleTask(in: .seconds(Int64(timeoutSeconds))) {
+            stateRef.failInit(error: SFTPClientError.timeout)
+        }
+
+        let response: SFTPResponse
+        do {
+            response = try await withCheckedThrowingContinuation { continuation in
+                do {
+                    try state.registerInit(continuation: continuation)
+                    channel.writeAndFlush(packet, promise: promise)
+                } catch {
+                    continuation.resume(throwing: error)
+                }
             }
+            timeoutTask.cancel()
+        } catch {
+            timeoutTask.cancel()
+            throw error
         }
 
         guard case .version(let version, _) = response else {

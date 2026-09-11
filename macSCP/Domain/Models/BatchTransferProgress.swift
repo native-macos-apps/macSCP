@@ -65,6 +65,9 @@ struct BatchTransferProgress: Identifiable, Sendable {
 /// Bundled batch progress snapshot dispatched to @MainActor at rate-limited intervals (~10fps / 0.1s).
 /// Contains the atomic snapshot of active and recently completed transfers.
 struct BatchProgressSnapshot: Sendable {
+    let batchId: UUID
+    let sequence: UInt64
+    let isFinal: Bool
     let completedFiles: Int
     let completedBytes: Int64
     let totalFiles: Int
@@ -79,10 +82,12 @@ struct BatchProgressSnapshot: Sendable {
 /// and throttles UI dispatches to keep the MainActor and SwiftUI rendering fluid (100ms / 10fps).
 final class BatchProgressTracker: @unchecked Sendable {
     private let lock = NSLock()
+    let batchId: UUID
     let totalFiles: Int
     let totalBytes: Int64
     private(set) var completedFiles: Int = 0
     private(set) var completedBytes: Int64 = 0
+    private var sequenceNumber: UInt64 = 0
 
     private var activeTransfers: [UUID: TransferProgress] = [:]
     private var recentTransfers: [TransferProgress] = []
@@ -99,7 +104,8 @@ final class BatchProgressTracker: @unchecked Sendable {
     private var lastUIUpdateTime: CFAbsoluteTime = 0
     private let minUIUpdateInterval: CFAbsoluteTime = 0.1 // 100ms (0.1s)
 
-    init(totalFiles: Int, totalBytes: Int64, initialRecent: [TransferProgress] = []) {
+    init(batchId: UUID = UUID(), totalFiles: Int, totalBytes: Int64, initialRecent: [TransferProgress] = []) {
+        self.batchId = batchId
         self.totalFiles = totalFiles
         self.totalBytes = totalBytes
         self.recentTransfers = initialRecent
@@ -216,17 +222,22 @@ final class BatchProgressTracker: @unchecked Sendable {
         let now = CFAbsoluteTimeGetCurrent()
         if force || (now - lastUIUpdateTime) >= minUIUpdateInterval {
             lastUIUpdateTime = now
-            return makeSnapshotLocked()
+            let isFinal = force && completedFiles >= totalFiles
+            return makeSnapshotLocked(isFinal: isFinal)
         }
         return nil
     }
 
-    private func makeSnapshotLocked() -> BatchProgressSnapshot {
+    private func makeSnapshotLocked(isFinal: Bool) -> BatchProgressSnapshot {
+        sequenceNumber += 1
         let activeBytesSum = activeTransfers.values.reduce(0) { $0 + $1.bytesTransferred }
         let transferred = min(totalBytes, completedBytes + activeBytesSum)
         let topFiles = pendingTopLevelFiles
         pendingTopLevelFiles.removeAll(keepingCapacity: true)
         return BatchProgressSnapshot(
+            batchId: batchId,
+            sequence: sequenceNumber,
+            isFinal: isFinal,
             completedFiles: completedFiles,
             completedBytes: completedBytes,
             totalFiles: totalFiles,
@@ -257,7 +268,11 @@ final class BatchProgressTracker: @unchecked Sendable {
         }
         let topFiles = pendingTopLevelFiles
         pendingTopLevelFiles.removeAll()
+        sequenceNumber += 1
         return BatchProgressSnapshot(
+            batchId: batchId,
+            sequence: sequenceNumber,
+            isFinal: true,
             completedFiles: completedFiles,
             completedBytes: completedBytes,
             totalFiles: totalFiles,

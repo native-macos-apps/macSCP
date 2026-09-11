@@ -23,6 +23,7 @@ final class FileBrowserViewModel {
     private(set) var recentTransfers: [TransferProgress] = []  // Completed/failed transfers
     private var transferTasks: [UUID: Task<Void, Never>] = [:]  // Tasks for cancellation
     private var currentBatchTracker: BatchProgressTracker?
+    private var lastAppliedSnapshotSequence: UInt64 = 0
     var isShowingTransfersPopover: Bool = false
     var activeBatch: BatchTransferProgress?
     private var isBatchCancelled: Bool = false
@@ -786,12 +787,15 @@ final class FileBrowserViewModel {
         self.isBatchCancelled = false
         let totalFilesCount = filesToUpload.count
         let totalBytesSum = filesToUpload.reduce(0) { $0 + $1.fileSize }
+        let batchId = UUID()
+        self.lastAppliedSnapshotSequence = 0
 
         if topLevelFolders.count > 0 || filesToUpload.count > 1 {
             let title = topLevelFolders.count == 1
                 ? "Uploading \"\(topLevelFolders[0].name)\""
                 : "Uploading \(totalFilesCount) files"
             self.activeBatch = BatchTransferProgress(
+                id: batchId,
                 title: title,
                 totalFiles: totalFilesCount,
                 totalBytes: totalBytesSum
@@ -838,6 +842,7 @@ final class FileBrowserViewModel {
         guard !filesToUpload.isEmpty else { return }
 
         let tracker = BatchProgressTracker(
+            batchId: batchId,
             totalFiles: filesToUpload.count,
             totalBytes: totalBytesSum,
             initialRecent: recentTransfers
@@ -865,7 +870,7 @@ final class FileBrowserViewModel {
 
         let finalSnapshot = tracker.drainFinal(isCancelled: self.isBatchCancelled)
         self.applyBatchSnapshot(finalSnapshot)
-        if var batch = self.activeBatch, batch.isInProgress {
+        if var batch = self.activeBatch, batch.id == batchId, batch.isInProgress {
             batch.status = self.isBatchCancelled ? .cancelled : .completed
             self.activeBatch = batch
         }
@@ -874,12 +879,25 @@ final class FileBrowserViewModel {
 
     /// Applies an atomic throttled snapshot from BatchProgressTracker to the UI state
     func applyBatchSnapshot(_ snapshot: BatchProgressSnapshot) {
+        // Discard snapshots from an older/different batch
+        if let batch = self.activeBatch, batch.id != snapshot.batchId {
+            return
+        }
+        // Discard out-of-order snapshots
+        guard snapshot.sequence > self.lastAppliedSnapshotSequence else {
+            return
+        }
+        self.lastAppliedSnapshotSequence = snapshot.sequence
+
         self.activeTransfers = snapshot.activeTransfers
         self.recentTransfers = snapshot.recentTransfers
         if var batch = self.activeBatch {
             batch.completedFiles = snapshot.completedFiles
             batch.completedBytes = snapshot.completedBytes
             batch.transferredBytes = snapshot.transferredBytes
+            if snapshot.isFinal {
+                batch.status = self.isBatchCancelled ? .cancelled : .completed
+            }
             self.activeBatch = batch
         }
         if !snapshot.topLevelFiles.isEmpty {

@@ -377,4 +377,140 @@ final class FileBrowserViewModelTests: XCTestCase {
         XCTAssertEqual(FileTypeService.typeDescription(for: bucket), "Bucket")
         XCTAssertEqual(FileTypeService.typeDescription(for: folder), "Folder")
     }
+
+    // MARK: - Batch Progress Tracker & Snapshot Ordering Tests
+
+    func testBatchProgressTracker_MonotonicSequencesAndFinalDrain() {
+        let batchId = UUID()
+        let tracker = BatchProgressTracker(batchId: batchId, totalFiles: 70, totalBytes: 70 * 25000)
+
+        var lastSequence: UInt64 = 0
+        for i in 1...70 {
+            let id = UUID()
+            let transfer = TransferProgress(
+                id: id,
+                fileName: "file\(i).txt",
+                localURL: nil,
+                remotePath: "/remote/file\(i).txt",
+                bytesTransferred: 0,
+                totalBytes: 25000,
+                transferType: .upload,
+                status: .inProgress,
+                isDirectory: false,
+                itemCount: 1
+            )
+            if let snap = tracker.registerActive(transfer: transfer) {
+                XCTAssertGreaterThan(snap.sequence, lastSequence)
+                lastSequence = snap.sequence
+                XCTAssertEqual(snap.batchId, batchId)
+            }
+
+            if let snap = tracker.completeFile(id: id, totalBytes: 25000) {
+                XCTAssertGreaterThan(snap.sequence, lastSequence)
+                lastSequence = snap.sequence
+                XCTAssertEqual(snap.batchId, batchId)
+                if i == 70 {
+                    XCTAssertTrue(snap.isFinal)
+                }
+            }
+        }
+
+        let finalSnap = tracker.drainFinal(isCancelled: false)
+        XCTAssertGreaterThan(finalSnap.sequence, lastSequence)
+        XCTAssertTrue(finalSnap.isFinal)
+        XCTAssertEqual(finalSnap.completedFiles, 70)
+        XCTAssertTrue(finalSnap.activeTransfers.isEmpty)
+    }
+
+    func testApplyBatchSnapshot_DiscardsStaleOutOfOrderSnapshots() {
+        let batchId = UUID()
+        sut.activeBatch = BatchTransferProgress(
+            id: batchId,
+            title: "Uploading 70 files",
+            totalFiles: 70,
+            totalBytes: 70 * 25000
+        )
+
+        // Snapshot #2 arrives first
+        let snap2 = BatchProgressSnapshot(
+            batchId: batchId,
+            sequence: 2,
+            isFinal: false,
+            completedFiles: 30,
+            completedBytes: 30 * 25000,
+            totalFiles: 70,
+            totalBytes: 70 * 25000,
+            transferredBytes: 30 * 25000,
+            activeTransfers: [:],
+            recentTransfers: [],
+            topLevelFiles: []
+        )
+        sut.applyBatchSnapshot(snap2)
+        XCTAssertEqual(sut.activeBatch?.completedFiles, 30)
+
+        // Snapshot #1 arrives delayed (out of order)
+        let snap1 = BatchProgressSnapshot(
+            batchId: batchId,
+            sequence: 1,
+            isFinal: false,
+            completedFiles: 10,
+            completedBytes: 10 * 25000,
+            totalFiles: 70,
+            totalBytes: 70 * 25000,
+            transferredBytes: 10 * 25000,
+            activeTransfers: [:],
+            recentTransfers: [],
+            topLevelFiles: []
+        )
+        sut.applyBatchSnapshot(snap1)
+        // Must NOT overwrite with stale completedFiles = 10
+        XCTAssertEqual(sut.activeBatch?.completedFiles, 30)
+
+        // Final snapshot #3 arrives
+        let snap3 = BatchProgressSnapshot(
+            batchId: batchId,
+            sequence: 3,
+            isFinal: true,
+            completedFiles: 70,
+            completedBytes: 70 * 25000,
+            totalFiles: 70,
+            totalBytes: 70 * 25000,
+            transferredBytes: 70 * 25000,
+            activeTransfers: [:],
+            recentTransfers: [],
+            topLevelFiles: []
+        )
+        sut.applyBatchSnapshot(snap3)
+        XCTAssertEqual(sut.activeBatch?.completedFiles, 70)
+        XCTAssertEqual(sut.activeBatch?.status, .completed)
+    }
+
+    func testApplyBatchSnapshot_DiscardsMismatchedBatchId() {
+        let currentBatchId = UUID()
+        let oldBatchId = UUID()
+        sut.activeBatch = BatchTransferProgress(
+            id: currentBatchId,
+            title: "Uploading new files",
+            totalFiles: 10,
+            totalBytes: 1000
+        )
+
+        let oldSnap = BatchProgressSnapshot(
+            batchId: oldBatchId,
+            sequence: 999,
+            isFinal: false,
+            completedFiles: 99,
+            completedBytes: 99999,
+            totalFiles: 100,
+            totalBytes: 100000,
+            transferredBytes: 99999,
+            activeTransfers: [:],
+            recentTransfers: [],
+            topLevelFiles: []
+        )
+        sut.applyBatchSnapshot(oldSnap)
+        // Must ignore snapshot from different batch
+        XCTAssertEqual(sut.activeBatch?.id, currentBatchId)
+        XCTAssertEqual(sut.activeBatch?.completedFiles, 0)
+    }
 }
