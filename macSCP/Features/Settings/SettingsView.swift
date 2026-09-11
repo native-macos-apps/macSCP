@@ -9,6 +9,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @State private var appLockManager = AppLockManager.shared
+    @State private var transferSettings = TransferSettings.shared
     private let biometricService: BiometricAuthServiceProtocol = BiometricAuthService.shared
 
     private var isBiometricAvailable: Bool {
@@ -21,6 +22,7 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
+            transfersSection
             securitySection
         }
         .formStyle(.grouped)
@@ -99,6 +101,25 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+        }
+    }
+
+    // MARK: - Transfers Section
+
+    @ViewBuilder
+    private var transfersSection: some View {
+        Section {
+            Picker("Concurrent transfers", selection: Bindable(transferSettings).maxConcurrentTransfers) {
+                ForEach(1...8, id: \.self) { count in
+                    Text("\(count) \(count == 1 ? "stream" : "streams")").tag(count)
+                }
+            }
+        } header: {
+            Text("Transfers")
+        } footer: {
+            Text("Controls how many files are uploaded or downloaded simultaneously when transferring directories or multiple files.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 }

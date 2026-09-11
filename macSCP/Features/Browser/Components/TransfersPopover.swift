@@ -19,7 +19,14 @@ struct TransfersPopover: View {
             header
             Divider()
 
-            if viewModel.allTransfers.isEmpty {
+            if let batch = viewModel.activeBatch, batch.isInProgress {
+                BatchTransferHeaderView(batch: batch) {
+                    viewModel.cancelBatch()
+                }
+                Divider()
+            }
+
+            if viewModel.allTransfers.isEmpty && viewModel.activeBatch == nil {
                 emptyState
             } else if needsScrolling {
                 scrollableTransfersList
@@ -46,7 +53,7 @@ struct TransfersPopover: View {
                 .foregroundStyle(.red)
             }
 
-            if !viewModel.recentTransfers.isEmpty {
+            if !viewModel.recentTransfers.isEmpty || (viewModel.activeBatch != nil && !(viewModel.activeBatch?.isInProgress ?? false)) {
                 Button("Clear") {
                     viewModel.clearCompletedTransfers()
                 }
