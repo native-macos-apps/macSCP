@@ -852,6 +852,10 @@ final class FileBrowserViewModel {
 
         if var batch = self.activeBatch, batch.isInProgress {
             batch.status = self.isBatchCancelled ? .cancelled : .completed
+            if !self.isBatchCancelled {
+                batch.completedFiles = batch.totalFiles
+                batch.transferredBytes = batch.totalBytes
+            }
             self.activeBatch = batch
         }
     }
@@ -880,6 +884,8 @@ final class FileBrowserViewModel {
             itemCount: 1
         )
 
+        var lastProgressUpdateTime: CFAbsoluteTime = 0
+
         let uploadTask = Task { [weak self] in
             guard let self = self else { return }
 
@@ -888,10 +894,16 @@ final class FileBrowserViewModel {
 
                 try await self.fileRepository.upload(localURL: file.localURL, to: file.remotePath) { [weak self] bytesTransferred in
                     guard let self else { return }
-                    Task { @MainActor in
-                        guard self.activeTransfers[transferId] != nil else { return }
-                        self.activeTransfers[transferId]?.bytesTransferred = bytesTransferred
-                        self.updateBatchTransferredBytes()
+                    let now = CFAbsoluteTimeGetCurrent()
+                    let isCompleted = bytesTransferred >= file.fileSize
+                    // Throttle updates to MainActor: at most once every 70ms, or when completed
+                    if isCompleted || (now - lastProgressUpdateTime) >= 0.07 {
+                        lastProgressUpdateTime = now
+                        Task { @MainActor in
+                            guard self.activeTransfers[transferId] != nil else { return }
+                            self.activeTransfers[transferId]?.bytesTransferred = bytesTransferred
+                            self.updateBatchTransferredBytes()
+                        }
                     }
                 }
 
@@ -954,6 +966,7 @@ final class FileBrowserViewModel {
                     }
                     self.transferTasks.removeValue(forKey: transferId)
                     self.activeBatch?.completedFiles += 1
+                    self.activeBatch?.completedBytes += file.fileSize
                     self.updateBatchTransferredBytes()
                 }
             }

@@ -70,9 +70,11 @@ nonisolated final class SFTPChannelHandler: ChannelDuplexHandler, @unchecked Sen
             return
         }
 
-        // Compact the accumulator if everything was consumed to free buffer space
+        // Compact the accumulator if everything was consumed or discard read bytes to free buffer space
         if accumulator.readableBytes == 0 {
             accumulator.clear()
+        } else if accumulator.readerIndex > 32768 {
+            accumulator.discardReadBytes()
         }
     }
 

@@ -530,6 +530,10 @@ final class CommanderViewModel {
 
         if var batch = self.activeBatch, batch.isInProgress {
             batch.status = self.isBatchCancelled ? .cancelled : .completed
+            if !self.isBatchCancelled {
+                batch.completedFiles = batch.totalFiles
+                batch.transferredBytes = batch.totalBytes
+            }
             self.activeBatch = batch
         }
     }
@@ -558,6 +562,8 @@ final class CommanderViewModel {
             itemCount: 1
         )
 
+        var lastProgressUpdateTime: CFAbsoluteTime = 0
+
         let transferTask = Task {
             do {
                 try Task.checkCancellation()
@@ -575,9 +581,15 @@ final class CommanderViewModel {
                     to: targetPath,
                     totalSize: sourceFile.size,
                     progress: { [weak self] bytesTransferred in
-                        Task { @MainActor in
-                            targetVM.updateTransferProgress(id: transferId, bytesTransferred: bytesTransferred)
-                            self?.updateBatchTransferredBytes(targetVM: targetVM)
+                        let now = CFAbsoluteTimeGetCurrent()
+                        let isCompleted = bytesTransferred >= sourceFile.size
+                        // Throttle progress updates to MainActor: at most once every 70ms, or when completed
+                        if isCompleted || (now - lastProgressUpdateTime) >= 0.07 {
+                            lastProgressUpdateTime = now
+                            Task { @MainActor in
+                                targetVM.updateTransferProgress(id: transferId, bytesTransferred: bytesTransferred)
+                                self?.updateBatchTransferredBytes(targetVM: targetVM)
+                            }
                         }
                     }
                 )
@@ -620,6 +632,7 @@ final class CommanderViewModel {
                 await MainActor.run {
                     targetVM.failTransfer(id: transferId, error: error, isCancelled: isCancelled)
                     self.activeBatch?.completedFiles += 1
+                    self.activeBatch?.completedBytes += sourceFile.size
                     self.updateBatchTransferredBytes(targetVM: targetVM)
                     if !isCancelled {
                         self.error = AppError.from(error)

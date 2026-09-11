@@ -12,7 +12,7 @@ import NIOFoundationCompat
 
 final class SFTPTransferEngine: Sendable {
     nonisolated static let defaultChunkSize: UInt32 = 64 * 1024 // 64 KB per chunk
-    nonisolated static let defaultWindowSize: Int = 16          // 16 in-flight chunks = 1 MB window
+    nonisolated static let defaultWindowSize: Int = 6           // 6 in-flight chunks = 384 KB window per stream, optimal for concurrent transfers without channel saturation
 
     // MARK: - Download
 
