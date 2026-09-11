@@ -22,6 +22,7 @@ final class FileBrowserViewModel {
     private(set) var activeTransfers: [UUID: TransferProgress] = [:]
     private(set) var recentTransfers: [TransferProgress] = []  // Completed/failed transfers
     private var transferTasks: [UUID: Task<Void, Never>] = [:]  // Tasks for cancellation
+    private var currentBatchTracker: BatchProgressTracker?
     var isShowingTransfersPopover: Bool = false
     var activeBatch: BatchTransferProgress?
     private var isBatchCancelled: Bool = false
@@ -836,7 +837,22 @@ final class FileBrowserViewModel {
 
         guard !filesToUpload.isEmpty else { return }
 
+        let tracker = BatchProgressTracker(
+            totalFiles: filesToUpload.count,
+            totalBytes: totalBytesSum,
+            initialRecent: recentTransfers
+        )
+        self.currentBatchTracker = tracker
+
         let maxConcurrent = TransferSettings.shared.maxConcurrentTransfers
+        let repository = self.fileRepository
+        let connectionType = self.connection.connectionType
+
+        let onUpdate: @Sendable (BatchProgressSnapshot) -> Void = { [weak self] snapshot in
+            Task { @MainActor [weak self] in
+                self?.applyBatchSnapshot(snapshot)
+            }
+        }
 
         await withTaskGroup(of: Void.self) { group in
             var fileIndex = 0
@@ -844,8 +860,14 @@ final class FileBrowserViewModel {
             while fileIndex < initialCount {
                 let file = filesToUpload[fileIndex]
                 fileIndex += 1
-                group.addTask { [weak self] in
-                    await self?.uploadSingleFile(file)
+                group.addTask {
+                    await Self.uploadSingleFile(
+                        file,
+                        repository: repository,
+                        connectionType: connectionType,
+                        tracker: tracker,
+                        onUpdate: onUpdate
+                    )
                 }
             }
 
@@ -856,34 +878,51 @@ final class FileBrowserViewModel {
                 if fileIndex < filesToUpload.count {
                     let file = filesToUpload[fileIndex]
                     fileIndex += 1
-                    group.addTask { [weak self] in
-                        await self?.uploadSingleFile(file)
+                    group.addTask {
+                        await Self.uploadSingleFile(
+                            file,
+                            repository: repository,
+                            connectionType: connectionType,
+                            tracker: tracker,
+                            onUpdate: onUpdate
+                        )
                     }
                 }
             }
         }
 
-        await MainActor.run {
-            if var batch = self.activeBatch, batch.isInProgress {
-                batch.status = self.isBatchCancelled ? .cancelled : .completed
-                if !self.isBatchCancelled {
-                    batch.completedFiles = batch.totalFiles
-                    batch.transferredBytes = batch.totalBytes
-                }
-                self.activeBatch = batch
-            }
+        let finalSnapshot = tracker.drainFinal(isCancelled: self.isBatchCancelled)
+        self.applyBatchSnapshot(finalSnapshot)
+        if var batch = self.activeBatch, batch.isInProgress {
+            batch.status = self.isBatchCancelled ? .cancelled : .completed
+            self.activeBatch = batch
+        }
+        self.currentBatchTracker = nil
+    }
+
+    /// Applies an atomic throttled snapshot from BatchProgressTracker to the UI state
+    func applyBatchSnapshot(_ snapshot: BatchProgressSnapshot) {
+        self.activeTransfers = snapshot.activeTransfers
+        self.recentTransfers = snapshot.recentTransfers
+        if var batch = self.activeBatch {
+            batch.completedFiles = snapshot.completedFiles
+            batch.completedBytes = snapshot.completedBytes
+            batch.transferredBytes = snapshot.transferredBytes
+            self.activeBatch = batch
+        }
+        for file in snapshot.topLevelFiles {
+            self.appendFile(file)
         }
     }
 
-    private func updateBatchTransferredBytes() {
-        guard var batch = activeBatch else { return }
-        let activeBytes = activeTransfers.values.reduce(0) { $0 + $1.bytesTransferred }
-        batch.transferredBytes = min(batch.totalBytes, batch.completedBytes + activeBytes)
-        self.activeBatch = batch
-    }
-
-    private func uploadSingleFile(_ file: PendingUploadFile) async {
-        if isBatchCancelled || Task.isCancelled { return }
+    nonisolated private static func uploadSingleFile(
+        _ file: PendingUploadFile,
+        repository: FileRepositoryProtocol,
+        connectionType: ConnectionType,
+        tracker: BatchProgressTracker,
+        onUpdate: @escaping @Sendable (BatchProgressSnapshot) -> Void
+    ) async {
+        if Task.isCancelled { return }
 
         let transferId = UUID()
         let transfer = TransferProgress(
@@ -899,91 +938,69 @@ final class FileBrowserViewModel {
             itemCount: 1
         )
 
-        var lastProgressUpdateTime: CFAbsoluteTime = 0
+        // Atomically register in tracker buffer
+        if let snapshot = tracker.registerActive(transfer: transfer) {
+            onUpdate(snapshot)
+        }
 
-        let uploadTask = Task { [weak self] in
-            guard let self = self else { return }
+        do {
+            try Task.checkCancellation()
 
-            do {
-                try Task.checkCancellation()
-
-                try await self.fileRepository.upload(localURL: file.localURL, to: file.remotePath) { [weak self] bytesTransferred in
-                    guard let self else { return }
-                    let now = CFAbsoluteTimeGetCurrent()
-                    let isCompleted = bytesTransferred >= file.fileSize
-                    if isCompleted || (now - lastProgressUpdateTime) >= 0.08 {
-                        lastProgressUpdateTime = now
-                        Task { @MainActor [weak self] in
-                            guard let self, self.activeTransfers[transferId] != nil else { return }
-                            self.activeTransfers[transferId]?.bytesTransferred = bytesTransferred
-                            self.updateBatchTransferredBytes()
-                        }
-                    }
-                }
-
-                try Task.checkCancellation()
-
-                var destRemoteFile: RemoteFile? = nil
-                if file.isTopLevel {
-                    destRemoteFile = RemoteFile(
-                        name: file.displayName,
-                        path: file.remotePath,
-                        isDirectory: false,
-                        size: file.fileSize,
-                        permissions: "-rw-r--r--",
-                        modificationDate: Date()
-                    )
-                }
-
-                await MainActor.run {
-                    self.completeTransfer(id: transferId, totalBytes: file.fileSize)
-                    self.activeBatch?.completedFiles += 1
-                    self.activeBatch?.completedBytes += file.fileSize
-                    self.updateBatchTransferredBytes()
-                    if let destRemoteFile {
-                        self.appendFile(destRemoteFile)
-                    }
-                }
-
-                AnalyticsService.trackFileUploaded(protocol: .init(from: self.connection.connectionType), fileCount: 1, totalBytes: file.fileSize)
-                logInfo("Uploaded: \(file.displayName)", category: self.connection.connectionType == .s3 ? .s3 : .sftp)
-            } catch {
-                let isCancellation = error is CancellationError ||
-                    Task.isCancelled ||
-                    String(describing: error).contains("CancellationError")
-
-                await MainActor.run {
-                    self.failTransfer(id: transferId, error: error, isCancelled: isCancellation)
-                    self.activeBatch?.completedFiles += 1
-                    self.activeBatch?.completedBytes += file.fileSize
-                    self.updateBatchTransferredBytes()
-                }
-
-                if isCancellation {
-                    logInfo("Upload cancelled: \(file.displayName)", category: self.connection.connectionType == .s3 ? .s3 : .sftp)
-                } else {
-                    logError("Upload failed for \(file.displayName): \(error)", category: self.connection.connectionType == .s3 ? .s3 : .sftp)
+            try await repository.upload(localURL: file.localURL, to: file.remotePath) { bytesTransferred in
+                if let snapshot = tracker.updateActiveBytes(id: transferId, bytes: bytesTransferred) {
+                    onUpdate(snapshot)
                 }
             }
-        }
 
-        await MainActor.run {
-            self.trackTransfer(transfer, task: uploadTask)
-        }
+            try Task.checkCancellation()
 
-        _ = await uploadTask.result
+            var destRemoteFile: RemoteFile? = nil
+            if file.isTopLevel {
+                destRemoteFile = RemoteFile(
+                    name: file.displayName,
+                    path: file.remotePath,
+                    isDirectory: false,
+                    size: file.fileSize,
+                    permissions: "-rw-r--r--",
+                    modificationDate: Date()
+                )
+            }
+
+            if let snapshot = tracker.completeFile(id: transferId, totalBytes: file.fileSize, topLevelFile: destRemoteFile) {
+                onUpdate(snapshot)
+            }
+
+            AnalyticsService.trackFileUploaded(protocol: .init(from: connectionType), fileCount: 1, totalBytes: file.fileSize)
+            logInfo("Uploaded: \(file.displayName)", category: connectionType == .s3 ? .s3 : .sftp)
+        } catch {
+            let isCancellation = error is CancellationError ||
+                Task.isCancelled ||
+                String(describing: error).contains("CancellationError")
+
+            if let snapshot = tracker.failOrCancelFile(id: transferId, totalBytes: file.fileSize, error: error, isCancelled: isCancellation) {
+                onUpdate(snapshot)
+            }
+
+            if isCancellation {
+                logInfo("Upload cancelled: \(file.displayName)", category: connectionType == .s3 ? .s3 : .sftp)
+            } else {
+                logError("Upload failed for \(file.displayName): \(error)", category: connectionType == .s3 ? .s3 : .sftp)
+            }
+        }
     }
 
     /// Cancels the entire active batch and all active file transfers
     func cancelBatch() {
         isBatchCancelled = true
         activeBatch?.status = .cancelled
+        currentBatchTracker?.cancelAll()
         cancelAllTransfers()
     }
 
     /// Cancels an active transfer
     func cancelTransfer(_ transfer: TransferProgress) {
         guard transfer.isInProgress else { return }
+        currentBatchTracker?.cancelTransfer(id: transfer.id)
 
         // Cancel the task
         if let task = transferTasks[transfer.id] {
@@ -994,6 +1011,9 @@ final class FileBrowserViewModel {
         if var cancelledTransfer = activeTransfers.removeValue(forKey: transfer.id) {
             cancelledTransfer.status = .cancelled
             recentTransfers.insert(cancelledTransfer, at: 0)
+            if recentTransfers.count > 30 {
+                recentTransfers = Array(recentTransfers.prefix(30))
+            }
         }
         transferTasks.removeValue(forKey: transfer.id)
     }
@@ -1002,12 +1022,21 @@ final class FileBrowserViewModel {
     func cancelAllTransfers() {
         isBatchCancelled = true
         activeBatch?.status = .cancelled
+        currentBatchTracker?.cancelAll()
         for (id, task) in transferTasks {
             task.cancel()
             if var cancelledTransfer = activeTransfers.removeValue(forKey: id) {
                 cancelledTransfer.status = .cancelled
                 recentTransfers.insert(cancelledTransfer, at: 0)
             }
+        }
+        for (_, var cancelledTransfer) in activeTransfers {
+            cancelledTransfer.status = .cancelled
+            recentTransfers.insert(cancelledTransfer, at: 0)
+        }
+        activeTransfers.removeAll()
+        if recentTransfers.count > 30 {
+            recentTransfers = Array(recentTransfers.prefix(30))
         }
         transferTasks.removeAll()
     }

@@ -62,121 +62,187 @@ struct BatchTransferProgress: Identifiable, Sendable {
     }
 }
 
-/// Bundled batch progress data to dispatch to @MainActor at rate-limited intervals (~15fps)
-struct BatchProgressUpdate: Sendable {
+/// Bundled batch progress snapshot dispatched to @MainActor at rate-limited intervals (~10fps / 0.1s).
+/// Contains the atomic snapshot of active and recently completed transfers.
+struct BatchProgressSnapshot: Sendable {
     let completedFiles: Int
+    let completedBytes: Int64
+    let totalFiles: Int
+    let totalBytes: Int64
     let transferredBytes: Int64
-    let completedTransfers: [TransferProgress]
+    let activeTransfers: [UUID: TransferProgress]
+    let recentTransfers: [TransferProgress]
     let topLevelFiles: [RemoteFile]
 }
 
 /// Thread-safe tracker that aggregates transfer progress across parallel streams
-/// and throttles UI dispatches to keep the MainActor and SwiftUI rendering fluid (~15fps).
+/// and throttles UI dispatches to keep the MainActor and SwiftUI rendering fluid (100ms / 10fps).
 final class BatchProgressTracker: @unchecked Sendable {
     private let lock = NSLock()
     let totalFiles: Int
     let totalBytes: Int64
     private(set) var completedFiles: Int = 0
     private(set) var completedBytes: Int64 = 0
-    private var activeBytes: [UUID: Int64] = [:]
-    private var pendingCompletedTransfers: [TransferProgress] = []
-    private var pendingTopLevelFiles: [RemoteFile] = []
-    private var lastUIUpdateTime: CFAbsoluteTime = 0
-    private let minUIUpdateInterval: CFAbsoluteTime = 0.066 // ~15 fps
 
-    init(totalFiles: Int, totalBytes: Int64) {
+    private var activeTransfers: [UUID: TransferProgress] = [:]
+    private var recentTransfers: [TransferProgress] = []
+    private var pendingTopLevelFiles: [RemoteFile] = []
+    private var cancellationHandlers: [UUID: () -> Void] = [:]
+
+    private var lastUIUpdateTime: CFAbsoluteTime = 0
+    private let minUIUpdateInterval: CFAbsoluteTime = 0.1 // 100ms (0.1s)
+
+    init(totalFiles: Int, totalBytes: Int64, initialRecent: [TransferProgress] = []) {
         self.totalFiles = totalFiles
         self.totalBytes = totalBytes
+        self.recentTransfers = initialRecent
     }
 
-    func registerActive(id: UUID) {
+    /// Registers a transfer as active. Returns a snapshot if UI should be updated.
+    func registerActive(
+        transfer: TransferProgress,
+        onCancel: (() -> Void)? = nil
+    ) -> BatchProgressSnapshot? {
         lock.lock()
         defer { lock.unlock() }
-        activeBytes[id] = 0
-    }
-
-    func updateActiveBytes(id: UUID, bytes: Int64) -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        activeBytes[id] = bytes
+        activeTransfers[transfer.id] = transfer
+        if let onCancel {
+            cancellationHandlers[transfer.id] = onCancel
+        }
         return checkShouldUpdateUI(force: false)
     }
 
-    func completeFile(
-        id: UUID,
-        fileSize: Int64,
-        completedTransfer: TransferProgress? = nil,
-        topLevelFile: RemoteFile? = nil
-    ) -> Bool {
+    /// Updates bytes transferred for an active transfer. Returns a snapshot if UI should be updated.
+    func updateActiveBytes(id: UUID, bytes: Int64) -> BatchProgressSnapshot? {
         lock.lock()
         defer { lock.unlock() }
-        completedFiles += 1
-        completedBytes += fileSize
-        activeBytes.removeValue(forKey: id)
-        if let transfer = completedTransfer {
-            pendingCompletedTransfers.append(transfer)
+        guard activeTransfers[id] != nil else { return nil }
+        activeTransfers[id]?.bytesTransferred = bytes
+        return checkShouldUpdateUI(force: false)
+    }
+
+    /// Marks a transfer as completed. Returns a snapshot if UI should be updated (forced if last file).
+    func completeFile(
+        id: UUID,
+        totalBytes: Int64,
+        topLevelFile: RemoteFile? = nil
+    ) -> BatchProgressSnapshot? {
+        lock.lock()
+        defer { lock.unlock() }
+        if var completedTransfer = activeTransfers.removeValue(forKey: id) {
+            completedTransfer.status = .completed
+            completedTransfer.bytesTransferred = totalBytes
+            recentTransfers.insert(completedTransfer, at: 0)
+            if recentTransfers.count > 30 {
+                recentTransfers = Array(recentTransfers.prefix(30))
+            }
         }
+        cancellationHandlers.removeValue(forKey: id)
+        completedFiles += 1
+        completedBytes += totalBytes
         if let topFile = topLevelFile {
             pendingTopLevelFiles.append(topFile)
         }
-        return checkShouldUpdateUI(force: completedFiles >= totalFiles)
+        let isLastFile = completedFiles >= totalFiles
+        return checkShouldUpdateUI(force: isLastFile)
     }
 
+    /// Marks a transfer as failed or cancelled. Returns a snapshot if UI should be updated (forced if last file).
     func failOrCancelFile(
         id: UUID,
-        fileSize: Int64,
-        failedTransfer: TransferProgress? = nil
-    ) -> Bool {
+        totalBytes: Int64,
+        error: Error?,
+        isCancelled: Bool
+    ) -> BatchProgressSnapshot? {
         lock.lock()
         defer { lock.unlock() }
-        completedFiles += 1
-        completedBytes += fileSize
-        activeBytes.removeValue(forKey: id)
-        if let transfer = failedTransfer {
-            pendingCompletedTransfers.append(transfer)
+        if var transfer = activeTransfers.removeValue(forKey: id) {
+            transfer.status = isCancelled ? .cancelled : .failed
+            transfer.error = isCancelled ? nil : error?.localizedDescription
+            recentTransfers.insert(transfer, at: 0)
+            if recentTransfers.count > 30 {
+                recentTransfers = Array(recentTransfers.prefix(30))
+            }
         }
-        return checkShouldUpdateUI(force: completedFiles >= totalFiles)
+        cancellationHandlers.removeValue(forKey: id)
+        completedFiles += 1
+        completedBytes += totalBytes
+        let isLastFile = completedFiles >= totalFiles
+        return checkShouldUpdateUI(force: isLastFile)
     }
 
-    private func checkShouldUpdateUI(force: Bool) -> Bool {
+    /// Cancels a specific active transfer if tracked
+    func cancelTransfer(id: UUID) {
+        lock.lock()
+        let handler = cancellationHandlers.removeValue(forKey: id)
+        lock.unlock()
+        handler?()
+    }
+
+    /// Cancels all tracked active transfers
+    func cancelAll() {
+        lock.lock()
+        let handlers = Array(cancellationHandlers.values)
+        cancellationHandlers.removeAll()
+        lock.unlock()
+        for handler in handlers {
+            handler()
+        }
+    }
+
+    private func checkShouldUpdateUI(force: Bool) -> BatchProgressSnapshot? {
         let now = CFAbsoluteTimeGetCurrent()
         if force || (now - lastUIUpdateTime) >= minUIUpdateInterval {
             lastUIUpdateTime = now
-            return true
+            return makeSnapshotLocked()
         }
-        return false
+        return nil
     }
 
-    func drainPendingUpdates() -> BatchProgressUpdate {
-        lock.lock()
-        defer { lock.unlock() }
-        let currentActive = activeBytes.values.reduce(0, +)
-        let totalTransferred = min(totalBytes, completedBytes + currentActive)
-        let transfers = pendingCompletedTransfers
+    private func makeSnapshotLocked() -> BatchProgressSnapshot {
+        let activeBytesSum = activeTransfers.values.reduce(0) { $0 + $1.bytesTransferred }
+        let transferred = min(totalBytes, completedBytes + activeBytesSum)
         let topFiles = pendingTopLevelFiles
-        pendingCompletedTransfers.removeAll(keepingCapacity: true)
         pendingTopLevelFiles.removeAll(keepingCapacity: true)
-        return BatchProgressUpdate(
+        return BatchProgressSnapshot(
             completedFiles: completedFiles,
-            transferredBytes: totalTransferred,
-            completedTransfers: transfers,
+            completedBytes: completedBytes,
+            totalFiles: totalFiles,
+            totalBytes: totalBytes,
+            transferredBytes: transferred,
+            activeTransfers: activeTransfers,
+            recentTransfers: recentTransfers,
             topLevelFiles: topFiles
         )
     }
 
-    func drainFinal() -> BatchProgressUpdate {
+    /// Takes a final snapshot and clears in-flight state.
+    func drainFinal(isCancelled: Bool = false) -> BatchProgressSnapshot {
         lock.lock()
         defer { lock.unlock() }
-        activeBytes.removeAll()
-        let totalTransferred = min(totalBytes, completedBytes)
-        let transfers = pendingCompletedTransfers
+        cancellationHandlers.removeAll()
+        for (_, var transfer) in activeTransfers {
+            transfer.status = isCancelled ? .cancelled : .completed
+            recentTransfers.insert(transfer, at: 0)
+        }
+        activeTransfers.removeAll()
+        if recentTransfers.count > 30 {
+            recentTransfers = Array(recentTransfers.prefix(30))
+        }
+        if !isCancelled {
+            completedFiles = totalFiles
+            completedBytes = totalBytes
+        }
         let topFiles = pendingTopLevelFiles
-        pendingCompletedTransfers.removeAll()
         pendingTopLevelFiles.removeAll()
-        return BatchProgressUpdate(
+        return BatchProgressSnapshot(
             completedFiles: completedFiles,
-            transferredBytes: totalTransferred,
-            completedTransfers: transfers,
+            completedBytes: completedBytes,
+            totalFiles: totalFiles,
+            totalBytes: totalBytes,
+            transferredBytes: totalBytes,
+            activeTransfers: [:],
+            recentTransfers: recentTransfers,
             topLevelFiles: topFiles
         )
     }

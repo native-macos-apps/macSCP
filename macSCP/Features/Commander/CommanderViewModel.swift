@@ -96,6 +96,7 @@ final class CommanderViewModel {
     var isShowingTransfersPopover: Bool = false
     var activeBatch: BatchTransferProgress?
     private var isBatchCancelled: Bool = false
+    private var currentBatchTracker: BatchProgressTracker?
     var pendingConnection: Connection?
     var pendingPanePosition: PanePosition?
 
@@ -172,6 +173,7 @@ final class CommanderViewModel {
     func cancelBatch() {
         isBatchCancelled = true
         activeBatch?.status = .cancelled
+        currentBatchTracker?.cancelAll()
         leftPane.browserViewModel?.cancelBatch()
         rightPane.browserViewModel?.cancelBatch()
     }
@@ -400,12 +402,6 @@ final class CommanderViewModel {
         }
     }
 
-    private func updateBatchTransferredBytes(targetVM: FileBrowserViewModel) {
-        guard var batch = activeBatch else { return }
-        let activeBytes = targetVM.activeTransfers.values.reduce(0) { $0 + $1.bytesTransferred }
-        batch.transferredBytes = min(batch.totalBytes, batch.completedBytes + activeBytes)
-        self.activeBatch = batch
-    }
 
     private func performTransfer(
         files: [RemoteFile],
@@ -500,7 +496,30 @@ final class CommanderViewModel {
             }
         }
 
+        let tracker = BatchProgressTracker(
+            totalFiles: itemsToTransfer.count,
+            totalBytes: totalBytesSum,
+            initialRecent: targetVM.recentTransfers
+        )
+        self.currentBatchTracker = tracker
+
         let maxConcurrent = TransferSettings.shared.maxConcurrentTransfers
+        let sourceRepo = sourceVM.fileRepository
+        let targetRepo = targetVM.fileRepository
+        let isTargetLocal = targetVM.isLocal
+        let isSourceLocal = sourceVM.isLocal
+
+        let onUpdate: @Sendable (BatchProgressSnapshot) -> Void = { [weak self, weak targetVM] snapshot in
+            Task { @MainActor [weak self, weak targetVM] in
+                guard let self, let targetVM else { return }
+                self.applyBatchSnapshot(snapshot, targetVM: targetVM)
+            }
+        }
+        let onError: @Sendable (AppError) -> Void = { [weak self] appError in
+            Task { @MainActor [weak self] in
+                self?.error = appError
+            }
+        }
 
         await withTaskGroup(of: Void.self) { group in
             var fileIndex = 0
@@ -508,14 +527,19 @@ final class CommanderViewModel {
             while fileIndex < initialCount {
                 let item = itemsToTransfer[fileIndex]
                 fileIndex += 1
-                group.addTask { [weak self] in
-                    await self?.transferSingleFile(
+                group.addTask {
+                    await Self.transferSingleFile(
                         sourceFile: item.sourceFile,
                         displayName: item.displayName,
                         targetPath: item.targetPath,
                         isTopLevel: item.isTopLevel,
-                        from: sourceVM,
-                        to: targetVM
+                        sourceRepo: sourceRepo,
+                        targetRepo: targetRepo,
+                        isTargetLocal: isTargetLocal,
+                        isSourceLocal: isSourceLocal,
+                        tracker: tracker,
+                        onUpdate: onUpdate,
+                        onError: onError
                     )
                 }
             }
@@ -527,136 +551,136 @@ final class CommanderViewModel {
                 if fileIndex < itemsToTransfer.count {
                     let item = itemsToTransfer[fileIndex]
                     fileIndex += 1
-                    group.addTask { [weak self] in
-                        await self?.transferSingleFile(
+                    group.addTask {
+                        await Self.transferSingleFile(
                             sourceFile: item.sourceFile,
                             displayName: item.displayName,
                             targetPath: item.targetPath,
                             isTopLevel: item.isTopLevel,
-                            from: sourceVM,
-                            to: targetVM
+                            sourceRepo: sourceRepo,
+                            targetRepo: targetRepo,
+                            isTargetLocal: isTargetLocal,
+                            isSourceLocal: isSourceLocal,
+                            tracker: tracker,
+                            onUpdate: onUpdate,
+                            onError: onError
                         )
                     }
                 }
             }
         }
 
-        await MainActor.run {
-            if var batch = self.activeBatch, batch.isInProgress {
-                batch.status = self.isBatchCancelled ? .cancelled : .completed
-                if !self.isBatchCancelled {
-                    batch.completedFiles = batch.totalFiles
-                    batch.transferredBytes = batch.totalBytes
-                }
-                self.activeBatch = batch
-            }
+        let finalSnapshot = tracker.drainFinal(isCancelled: self.isBatchCancelled)
+        self.applyBatchSnapshot(finalSnapshot, targetVM: targetVM)
+        if var batch = self.activeBatch, batch.isInProgress {
+            batch.status = self.isBatchCancelled ? .cancelled : .completed
+            self.activeBatch = batch
+        }
+        self.currentBatchTracker = nil
+    }
+
+    /// Applies an atomic throttled snapshot from BatchProgressTracker to target FileBrowserViewModel and activeBatch
+    func applyBatchSnapshot(_ snapshot: BatchProgressSnapshot, targetVM: FileBrowserViewModel) {
+        targetVM.applyBatchSnapshot(snapshot)
+        if var batch = self.activeBatch {
+            batch.completedFiles = snapshot.completedFiles
+            batch.completedBytes = snapshot.completedBytes
+            batch.transferredBytes = snapshot.transferredBytes
+            self.activeBatch = batch
         }
     }
 
-    private func transferSingleFile(
+    nonisolated private static func transferSingleFile(
         sourceFile: RemoteFile,
         displayName: String,
         targetPath: String,
         isTopLevel: Bool,
-        from sourceVM: FileBrowserViewModel,
-        to targetVM: FileBrowserViewModel
+        sourceRepo: FileRepositoryProtocol,
+        targetRepo: FileRepositoryProtocol,
+        isTargetLocal: Bool,
+        isSourceLocal: Bool,
+        tracker: BatchProgressTracker,
+        onUpdate: @escaping @Sendable (BatchProgressSnapshot) -> Void,
+        onError: @escaping @Sendable (AppError) -> Void
     ) async {
-        if isBatchCancelled || Task.isCancelled { return }
+        if Task.isCancelled { return }
 
         let transferId = UUID()
         let transfer = TransferProgress(
             id: transferId,
             fileName: displayName,
-            localURL: targetVM.isLocal ? URL(fileURLWithPath: targetPath) : (sourceVM.isLocal ? URL(fileURLWithPath: sourceFile.path) : nil),
+            localURL: isTargetLocal ? URL(fileURLWithPath: targetPath) : (isSourceLocal ? URL(fileURLWithPath: sourceFile.path) : nil),
             remotePath: targetPath,
             bytesTransferred: 0,
             totalBytes: sourceFile.size,
-            transferType: targetVM.isLocal ? .download : .upload,
+            transferType: isTargetLocal ? .download : .upload,
             status: .inProgress,
             isDirectory: false,
             itemCount: 1
         )
 
-        var lastProgressUpdateTime: CFAbsoluteTime = 0
+        // Register in tracker buffer immediately
+        if let snapshot = tracker.registerActive(transfer: transfer) {
+            onUpdate(snapshot)
+        }
 
-        let transferTask = Task {
-            do {
-                try Task.checkCancellation()
+        do {
+            try Task.checkCancellation()
 
-                let reader = try await sourceVM.fileRepository.openStreamReader(at: sourceFile.path)
-                var closed = false
-                defer {
-                    if !closed {
-                        Task { await reader.close() }
-                    }
+            let reader = try await sourceRepo.openStreamReader(at: sourceFile.path)
+            var closed = false
+            defer {
+                if !closed {
+                    Task { await reader.close() }
                 }
-
-                try await targetVM.fileRepository.writeStream(
-                    from: reader,
-                    to: targetPath,
-                    totalSize: sourceFile.size,
-                    progress: { [weak self] bytesTransferred in
-                        let now = CFAbsoluteTimeGetCurrent()
-                        let isCompleted = bytesTransferred >= sourceFile.size
-                        if isCompleted || (now - lastProgressUpdateTime) >= 0.08 {
-                            lastProgressUpdateTime = now
-                            Task { @MainActor in
-                                targetVM.updateTransferProgress(id: transferId, bytesTransferred: bytesTransferred)
-                                self?.updateBatchTransferredBytes(targetVM: targetVM)
-                            }
-                        }
-                    }
-                )
-                await reader.close()
-                closed = true
-
-                try Task.checkCancellation()
-
-                var destFile: RemoteFile? = nil
-                if isTopLevel {
-                    destFile = RemoteFile(
-                        name: sourceFile.name,
-                        path: targetPath,
-                        isDirectory: false,
-                        size: sourceFile.size,
-                        permissions: sourceFile.permissions,
-                        modificationDate: Date(),
-                        owner: sourceFile.owner,
-                        group: sourceFile.group
-                    )
-                }
-
-                await MainActor.run {
-                    targetVM.completeTransfer(id: transferId, totalBytes: sourceFile.size)
-                    self.activeBatch?.completedFiles += 1
-                    self.activeBatch?.completedBytes += sourceFile.size
-                    self.updateBatchTransferredBytes(targetVM: targetVM)
-                    if let destFile {
-                        targetVM.appendFile(destFile)
-                    }
-                }
-
-                logInfo("Transfer completed: \(displayName)", category: .app)
-            } catch {
-                let isCancelled = Task.isCancelled || error is CancellationError
-                await MainActor.run {
-                    targetVM.failTransfer(id: transferId, error: error, isCancelled: isCancelled)
-                    self.activeBatch?.completedFiles += 1
-                    self.activeBatch?.completedBytes += sourceFile.size
-                    self.updateBatchTransferredBytes(targetVM: targetVM)
-                    if !isCancelled {
-                        self.error = AppError.from(error)
-                    }
-                }
-                logError("Transfer failed for \(displayName): \(error)", category: .app)
             }
-        }
 
-        await MainActor.run {
-            targetVM.trackTransfer(transfer, task: transferTask)
-        }
+            try await targetRepo.writeStream(
+                from: reader,
+                to: targetPath,
+                totalSize: sourceFile.size,
+                progress: { bytesTransferred in
+                    if let snapshot = tracker.updateActiveBytes(id: transferId, bytes: bytesTransferred) {
+                        onUpdate(snapshot)
+                    }
+                }
+            )
+            await reader.close()
+            closed = true
 
-        _ = await transferTask.result
+            try Task.checkCancellation()
+
+            var destFile: RemoteFile? = nil
+            if isTopLevel {
+                destFile = RemoteFile(
+                    name: sourceFile.name,
+                    path: targetPath,
+                    isDirectory: false,
+                    size: sourceFile.size,
+                    permissions: sourceFile.permissions,
+                    modificationDate: Date(),
+                    owner: sourceFile.owner,
+                    group: sourceFile.group
+                )
+            }
+
+            if let snapshot = tracker.completeFile(id: transferId, totalBytes: sourceFile.size, topLevelFile: destFile) {
+                onUpdate(snapshot)
+            }
+
+            logInfo("Transfer completed: \(displayName)", category: .app)
+        } catch {
+            let isCancelled = Task.isCancelled || error is CancellationError
+
+            if let snapshot = tracker.failOrCancelFile(id: transferId, totalBytes: sourceFile.size, error: error, isCancelled: isCancelled) {
+                onUpdate(snapshot)
+            }
+
+            if !isCancelled {
+                onError(AppError.from(error))
+            }
+            logError("Transfer failed for \(displayName): \(error)", category: .app)
+        }
     }
 
     /// Transfers selected files from active pane to inactive opposite pane
