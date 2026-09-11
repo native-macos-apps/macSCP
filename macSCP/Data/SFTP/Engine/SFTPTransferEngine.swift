@@ -137,6 +137,18 @@ final class SFTPTransferEngine: Sendable {
             return
         }
 
+        // Fast path for small files (<= chunkSize) - avoids task group and sliding window overhead
+        if fileSize <= UInt64(chunkSize) {
+            if let buffer = try await client.read(handle: handle, offset: 0, length: UInt32(fileSize)),
+               let chunkData = buffer.getData(at: 0, length: buffer.readableBytes) {
+                try fileHandle.write(contentsOf: chunkData)
+                progress?(Int64(chunkData.count))
+            }
+            try await client.closeHandle(handle)
+            closedRemote = true
+            return
+        }
+
         // Sliding window pipelined download
         var nextReadOffset: UInt64 = 0
         var totalBytesDownloaded: Int64 = 0
@@ -320,6 +332,20 @@ final class SFTPTransferEngine: Sendable {
 
         guard fileSize > 0 else {
             progress?(0)
+            try await client.closeHandle(handle)
+            closedRemote = true
+            return
+        }
+
+        // Fast path for small files (<= chunkSize) - avoids task group and sliding window overhead
+        if fileSize <= UInt64(chunkSize) {
+            let data = try fileHandle.readToEnd() ?? Data()
+            if !data.isEmpty {
+                var buffer = ByteBufferAllocator().buffer(capacity: data.count)
+                buffer.writeBytes(data)
+                try await client.write(handle: handle, offset: 0, data: buffer)
+                progress?(Int64(data.count))
+            }
             try await client.closeHandle(handle)
             closedRemote = true
             return

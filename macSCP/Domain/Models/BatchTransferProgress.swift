@@ -88,6 +88,13 @@ final class BatchProgressTracker: @unchecked Sendable {
     private var recentTransfers: [TransferProgress] = []
     private var pendingTopLevelFiles: [RemoteFile] = []
     private var cancellationHandlers: [UUID: () -> Void] = [:]
+    private var isCancelled: Bool = false
+
+    var isBatchCancelled: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return isCancelled
+    }
 
     private var lastUIUpdateTime: CFAbsoluteTime = 0
     private let minUIUpdateInterval: CFAbsoluteTime = 0.1 // 100ms (0.1s)
@@ -182,12 +189,27 @@ final class BatchProgressTracker: @unchecked Sendable {
     /// Cancels all tracked active transfers
     func cancelAll() {
         lock.lock()
+        isCancelled = true
         let handlers = Array(cancellationHandlers.values)
         cancellationHandlers.removeAll()
         lock.unlock()
         for handler in handlers {
             handler()
         }
+    }
+
+    /// Clears completed transfers from recentTransfers history. Does NOT touch in-progress active transfers.
+    func clearCompleted() {
+        lock.lock()
+        defer { lock.unlock() }
+        recentTransfers.removeAll()
+    }
+
+    /// Removes a specific transfer from recentTransfers history.
+    func removeRecent(id: UUID) {
+        lock.lock()
+        defer { lock.unlock() }
+        recentTransfers.removeAll { $0.id == id }
     }
 
     private func checkShouldUpdateUI(force: Bool) -> BatchProgressSnapshot? {

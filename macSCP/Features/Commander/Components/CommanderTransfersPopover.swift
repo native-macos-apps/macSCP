@@ -98,7 +98,6 @@ struct CommanderTransfersPopover: View {
     }
 
     private func removeTransfer(_ transfer: TransferProgress) {
-        viewModel.leftPane.browserViewModel?.removeTransfer(transfer)
-        viewModel.rightPane.browserViewModel?.removeTransfer(transfer)
+        viewModel.removeTransfer(transfer)
     }
 }

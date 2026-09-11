@@ -712,7 +712,7 @@ final class FileBrowserViewModel {
         await uploadURLs(panel.urls)
     }
 
-    private struct PendingUploadFile {
+    private struct PendingUploadFile: Sendable {
         let localURL: URL
         let displayName: String
         let remotePath: String
@@ -854,42 +854,14 @@ final class FileBrowserViewModel {
             }
         }
 
-        await withTaskGroup(of: Void.self) { group in
-            var fileIndex = 0
-            let initialCount = min(maxConcurrent, filesToUpload.count)
-            while fileIndex < initialCount {
-                let file = filesToUpload[fileIndex]
-                fileIndex += 1
-                group.addTask {
-                    await Self.uploadSingleFile(
-                        file,
-                        repository: repository,
-                        connectionType: connectionType,
-                        tracker: tracker,
-                        onUpdate: onUpdate
-                    )
-                }
-            }
-
-            for await _ in group {
-                if Task.isCancelled || self.isBatchCancelled {
-                    break
-                }
-                if fileIndex < filesToUpload.count {
-                    let file = filesToUpload[fileIndex]
-                    fileIndex += 1
-                    group.addTask {
-                        await Self.uploadSingleFile(
-                            file,
-                            repository: repository,
-                            connectionType: connectionType,
-                            tracker: tracker,
-                            onUpdate: onUpdate
-                        )
-                    }
-                }
-            }
-        }
+        await Self.processBatchUpload(
+            files: filesToUpload,
+            maxConcurrent: maxConcurrent,
+            repository: repository,
+            connectionType: connectionType,
+            tracker: tracker,
+            onUpdate: onUpdate
+        )
 
         let finalSnapshot = tracker.drainFinal(isCancelled: self.isBatchCancelled)
         self.applyBatchSnapshot(finalSnapshot)
@@ -910,8 +882,70 @@ final class FileBrowserViewModel {
             batch.transferredBytes = snapshot.transferredBytes
             self.activeBatch = batch
         }
-        for file in snapshot.topLevelFiles {
-            self.appendFile(file)
+        if !snapshot.topLevelFiles.isEmpty {
+            var updatedFiles = self.files
+            for file in snapshot.topLevelFiles {
+                let cleanPath = file.path.trimmingCharacters(in: ["/"])
+                if let idx = updatedFiles.firstIndex(where: {
+                    $0.name == file.name || $0.path.trimmingCharacters(in: ["/"]) == cleanPath
+                }) {
+                    updatedFiles[idx] = file
+                } else {
+                    updatedFiles.append(file)
+                }
+            }
+            self.files = updatedFiles
+            if case .loading = state {
+                state = .success(())
+            } else if case .idle = state {
+                state = .success(())
+            }
+        }
+    }
+
+    nonisolated private static func processBatchUpload(
+        files: [PendingUploadFile],
+        maxConcurrent: Int,
+        repository: FileRepositoryProtocol,
+        connectionType: ConnectionType,
+        tracker: BatchProgressTracker,
+        onUpdate: @escaping @Sendable (BatchProgressSnapshot) -> Void
+    ) async {
+        await withTaskGroup(of: Void.self) { group in
+            var fileIndex = 0
+            let initialCount = min(maxConcurrent, files.count)
+            while fileIndex < initialCount {
+                let file = files[fileIndex]
+                fileIndex += 1
+                group.addTask {
+                    await Self.uploadSingleFile(
+                        file,
+                        repository: repository,
+                        connectionType: connectionType,
+                        tracker: tracker,
+                        onUpdate: onUpdate
+                    )
+                }
+            }
+
+            for await _ in group {
+                if Task.isCancelled || tracker.isBatchCancelled {
+                    break
+                }
+                if fileIndex < files.count {
+                    let file = files[fileIndex]
+                    fileIndex += 1
+                    group.addTask {
+                        await Self.uploadSingleFile(
+                            file,
+                            repository: repository,
+                            connectionType: connectionType,
+                            tracker: tracker,
+                            onUpdate: onUpdate
+                        )
+                    }
+                }
+            }
         }
     }
 
@@ -1096,6 +1130,7 @@ final class FileBrowserViewModel {
 
     /// Clears completed/failed transfers from the list
     func clearCompletedTransfers() {
+        currentBatchTracker?.clearCompleted()
         recentTransfers.removeAll()
         if activeBatch?.status == .completed || activeBatch?.status == .cancelled || activeBatch?.status == .failed {
             activeBatch = nil
@@ -1104,6 +1139,7 @@ final class FileBrowserViewModel {
 
     /// Removes a specific transfer from the recent list
     func removeTransfer(_ transfer: TransferProgress) {
+        currentBatchTracker?.removeRecent(id: transfer.id)
         recentTransfers.removeAll { $0.id == transfer.id }
     }
 

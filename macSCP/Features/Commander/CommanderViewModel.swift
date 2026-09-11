@@ -179,11 +179,18 @@ final class CommanderViewModel {
     }
 
     func clearCompletedTransfers() {
+        currentBatchTracker?.clearCompleted()
         if activeBatch?.status == .completed || activeBatch?.status == .cancelled || activeBatch?.status == .failed {
             activeBatch = nil
         }
         leftPane.browserViewModel?.clearCompletedTransfers()
         rightPane.browserViewModel?.clearCompletedTransfers()
+    }
+
+    func removeTransfer(_ transfer: TransferProgress) {
+        currentBatchTracker?.removeRecent(id: transfer.id)
+        leftPane.browserViewModel?.removeTransfer(transfer)
+        rightPane.browserViewModel?.removeTransfer(transfer)
     }
 
     // MARK: - Initialization
@@ -360,7 +367,7 @@ final class CommanderViewModel {
         }
     }
 
-    private struct PendingCommanderTransfer {
+    private struct PendingCommanderTransfer: Sendable {
         let sourceFile: RemoteFile
         let displayName: String
         let targetPath: String
@@ -521,11 +528,54 @@ final class CommanderViewModel {
             }
         }
 
+        await Self.processBatchTransfer(
+            items: itemsToTransfer,
+            maxConcurrent: maxConcurrent,
+            sourceRepo: sourceRepo,
+            targetRepo: targetRepo,
+            isTargetLocal: isTargetLocal,
+            isSourceLocal: isSourceLocal,
+            tracker: tracker,
+            onUpdate: onUpdate,
+            onError: onError
+        )
+
+        let finalSnapshot = tracker.drainFinal(isCancelled: self.isBatchCancelled)
+        self.applyBatchSnapshot(finalSnapshot, targetVM: targetVM)
+        if var batch = self.activeBatch, batch.isInProgress {
+            batch.status = self.isBatchCancelled ? .cancelled : .completed
+            self.activeBatch = batch
+        }
+        self.currentBatchTracker = nil
+    }
+
+    /// Applies an atomic throttled snapshot from BatchProgressTracker to target FileBrowserViewModel and activeBatch
+    func applyBatchSnapshot(_ snapshot: BatchProgressSnapshot, targetVM: FileBrowserViewModel) {
+        targetVM.applyBatchSnapshot(snapshot)
+        if var batch = self.activeBatch {
+            batch.completedFiles = snapshot.completedFiles
+            batch.completedBytes = snapshot.completedBytes
+            batch.transferredBytes = snapshot.transferredBytes
+            self.activeBatch = batch
+        }
+    }
+
+    nonisolated private static func processBatchTransfer(
+        items: [PendingCommanderTransfer],
+        maxConcurrent: Int,
+        sourceRepo: FileRepositoryProtocol,
+        targetRepo: FileRepositoryProtocol,
+        isTargetLocal: Bool,
+        isSourceLocal: Bool,
+        tracker: BatchProgressTracker,
+        onUpdate: @escaping @Sendable (BatchProgressSnapshot) -> Void,
+        onError: @escaping @Sendable (AppError) -> Void
+    ) async {
         await withTaskGroup(of: Void.self) { group in
             var fileIndex = 0
-            let initialCount = min(maxConcurrent, itemsToTransfer.count)
+            let initialCount = min(maxConcurrent, items.count)
             while fileIndex < initialCount {
-                let item = itemsToTransfer[fileIndex]
+                let item = items[fileIndex]
                 fileIndex += 1
                 group.addTask {
                     await Self.transferSingleFile(
@@ -545,11 +595,11 @@ final class CommanderViewModel {
             }
 
             for await _ in group {
-                if Task.isCancelled || self.isBatchCancelled {
+                if Task.isCancelled || tracker.isBatchCancelled {
                     break
                 }
-                if fileIndex < itemsToTransfer.count {
-                    let item = itemsToTransfer[fileIndex]
+                if fileIndex < items.count {
+                    let item = items[fileIndex]
                     fileIndex += 1
                     group.addTask {
                         await Self.transferSingleFile(
@@ -568,25 +618,6 @@ final class CommanderViewModel {
                     }
                 }
             }
-        }
-
-        let finalSnapshot = tracker.drainFinal(isCancelled: self.isBatchCancelled)
-        self.applyBatchSnapshot(finalSnapshot, targetVM: targetVM)
-        if var batch = self.activeBatch, batch.isInProgress {
-            batch.status = self.isBatchCancelled ? .cancelled : .completed
-            self.activeBatch = batch
-        }
-        self.currentBatchTracker = nil
-    }
-
-    /// Applies an atomic throttled snapshot from BatchProgressTracker to target FileBrowserViewModel and activeBatch
-    func applyBatchSnapshot(_ snapshot: BatchProgressSnapshot, targetVM: FileBrowserViewModel) {
-        targetVM.applyBatchSnapshot(snapshot)
-        if var batch = self.activeBatch {
-            batch.completedFiles = snapshot.completedFiles
-            batch.completedBytes = snapshot.completedBytes
-            batch.transferredBytes = snapshot.transferredBytes
-            self.activeBatch = batch
         }
     }
 
