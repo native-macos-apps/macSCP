@@ -128,6 +128,39 @@ final class ConnectionListViewModelTests: XCTestCase {
         XCTAssertEqual(sut.selectedSidebarItem, .allConnections)
     }
 
+    func testConfirmAndCancelRenameFolder() {
+        // Given
+        let folder = Folder(name: "Test Folder")
+
+        // When
+        sut.confirmRenameFolder(folder)
+
+        // Then
+        XCTAssertTrue(sut.isShowingRenameFolderAlert)
+        XCTAssertEqual(sut.folderToRename?.id, folder.id)
+
+        // When
+        sut.cancelRenameFolder()
+
+        // Then
+        XCTAssertFalse(sut.isShowingRenameFolderAlert)
+        XCTAssertNil(sut.folderToRename)
+    }
+
+    func testRenameFolder_Success() async {
+        // Given
+        let folder = Folder(name: "Old Folder")
+        mockFolderRepository.mockFolders = [folder]
+        await sut.loadData()
+
+        // When
+        await sut.renameFolder(folder, to: "Renamed Folder")
+
+        // Then
+        XCTAssertTrue(mockFolderRepository.updateCalled)
+        XCTAssertEqual(mockFolderRepository.lastUpdatedFolder?.name, "Renamed Folder")
+    }
+
     // MARK: - Filter Tests
 
     func testFilteredConnections_SearchText() async {

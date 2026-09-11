@@ -81,4 +81,12 @@ final class S3FileRepository: FileRepositoryProtocol, @unchecked Sendable {
     func getRealPath(at path: String) async throws -> String {
         try await s3Session.getRealPath(at: path)
     }
+
+    func openStreamReader(at path: String) async throws -> FileStreamReader {
+        try await s3Session.openStreamReader(at: path)
+    }
+
+    func writeStream(from reader: FileStreamReader, to path: String, totalSize: Int64?, progress: TransferProgressHandler?) async throws {
+        try await s3Session.writeStream(from: reader, to: path, totalSize: totalSize, progress: progress)
+    }
 }

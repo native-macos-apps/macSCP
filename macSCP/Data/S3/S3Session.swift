@@ -866,6 +866,151 @@ actor S3Session: S3SessionProtocol {
         }
     }
 
+    func openStreamReader(at path: String) async throws -> FileStreamReader {
+        guard let s3 = s3 else {
+            throw AppError.notConnected
+        }
+
+        let target = try resolveObjectTarget(for: path)
+        let key = target.key
+        let request = GetObjectInput(bucket: target.bucket, key: key)
+
+        do {
+            let response = try await s3.getObject(input: request)
+            guard let body = response.body else {
+                throw AppError.s3OperationFailed("Missing response body")
+            }
+            return S3StreamReader(body: body)
+        } catch {
+            throw parseS3Error(error)
+        }
+    }
+
+    func writeStream(from reader: FileStreamReader, to path: String, totalSize: Int64?, progress: TransferProgressHandler?) async throws {
+        guard let s3 = s3 else {
+            throw AppError.notConnected
+        }
+
+        let target = try resolveObjectTarget(for: path)
+        let bucket = target.bucket
+        let key = target.key
+
+        // Minimum part size for S3 multipart upload is 5 MB
+        let minPartSize = 5 * 1024 * 1024
+        var buffer = Data()
+
+        // Pre-fill initial buffer to check if file fits in a single part (<= 5 MB)
+        while buffer.count < minPartSize {
+            try Task.checkCancellation()
+            guard let chunk = try await reader.readNextChunk(), !chunk.isEmpty else {
+                break
+            }
+            buffer.append(chunk)
+        }
+
+        // Case 1: Small file (<= 5 MB) - upload in a single PutObject without multipart overhead
+        if buffer.count < minPartSize {
+            let request = PutObjectInput(
+                body: ByteStream.data(buffer),
+                bucket: bucket,
+                key: key
+            )
+            do {
+                _ = try await s3.putObject(input: request)
+                progress?(Int64(buffer.count))
+                log("Stream uploaded directly (single part): \(path) (\(buffer.count) bytes)")
+                return
+            } catch {
+                throw parseS3Error(error)
+            }
+        }
+
+        // Case 2: Large file (> 5 MB) - use Multipart Upload with 5 MB memory chunks
+        let createRequest = CreateMultipartUploadInput(bucket: bucket, key: key)
+        let createResponse: CreateMultipartUploadOutput
+        do {
+            createResponse = try await s3.createMultipartUpload(input: createRequest)
+        } catch {
+            throw parseS3Error(error)
+        }
+
+        guard let uploadId = createResponse.uploadId else {
+            throw AppError.s3OperationFailed("Failed to initiate multipart upload")
+        }
+
+        var completedParts: [S3ClientTypes.CompletedPart] = []
+        var partNumber = 1
+        var totalTransferred: Int64 = 0
+
+        do {
+            // Upload the pre-buffered first part
+            let part1Req = UploadPartInput(
+                body: ByteStream.data(buffer),
+                bucket: bucket,
+                key: key,
+                partNumber: partNumber,
+                uploadId: uploadId
+            )
+            let part1Resp = try await s3.uploadPart(input: part1Req)
+            completedParts.append(S3ClientTypes.CompletedPart(eTag: part1Resp.eTag, partNumber: partNumber))
+            totalTransferred += Int64(buffer.count)
+            partNumber += 1
+            progress?(totalTransferred)
+
+            buffer = Data()
+
+            // Stream subsequent parts
+            while true {
+                try Task.checkCancellation()
+
+                while buffer.count < minPartSize {
+                    guard let chunk = try await reader.readNextChunk(), !chunk.isEmpty else {
+                        break
+                    }
+                    buffer.append(chunk)
+                }
+
+                if buffer.isEmpty {
+                    break
+                }
+
+                let uploadPartReq = UploadPartInput(
+                    body: ByteStream.data(buffer),
+                    bucket: bucket,
+                    key: key,
+                    partNumber: partNumber,
+                    uploadId: uploadId
+                )
+                let partResp = try await s3.uploadPart(input: uploadPartReq)
+                completedParts.append(S3ClientTypes.CompletedPart(eTag: partResp.eTag, partNumber: partNumber))
+                totalTransferred += Int64(buffer.count)
+                partNumber += 1
+                progress?(totalTransferred)
+
+                if buffer.count < minPartSize {
+                    buffer.removeAll()
+                    break
+                }
+                buffer.removeAll(keepingCapacity: true)
+            }
+
+            // Complete multipart upload
+            let completeReq = CompleteMultipartUploadInput(
+                bucket: bucket,
+                key: key,
+                multipartUpload: S3ClientTypes.CompletedMultipartUpload(parts: completedParts),
+                uploadId: uploadId
+            )
+            _ = try await s3.completeMultipartUpload(input: completeReq)
+            log("Stream uploaded (multipart): \(path) (\(totalTransferred) bytes, \(completedParts.count) parts)")
+
+        } catch {
+            let abortReq = AbortMultipartUploadInput(bucket: bucket, key: key, uploadId: uploadId)
+            _ = try? await s3.abortMultipartUpload(input: abortReq)
+            throw parseS3Error(error)
+        }
+    }
+
     // MARK: - Private Helpers
 
     /// Normalizes a path to an S3 key (removes leading /)
@@ -1051,5 +1196,46 @@ actor S3Session: S3SessionProtocol {
         }
 
         return .s3OperationFailed(error.localizedDescription)
+    }
+}
+
+// MARK: - S3StreamReader
+
+final class S3StreamReader: FileStreamReader, @unchecked Sendable {
+    private let body: ByteStream
+    private var dataOffset: Int = 0
+    private let chunkSize: Int
+    private var isClosed = false
+
+    init(body: ByteStream, chunkSize: Int = 64 * 1024) {
+        self.body = body
+        self.chunkSize = chunkSize
+    }
+
+    func readNextChunk() async throws -> Data? {
+        guard !isClosed else { return nil }
+
+        switch body {
+        case .stream(let stream):
+            let chunk = try await stream.readAsync(upToCount: chunkSize)
+            if let chunk = chunk, !chunk.isEmpty {
+                return chunk
+            }
+            return nil
+
+        case .data(let data):
+            guard let data = data, dataOffset < data.count else { return nil }
+            let nextOffset = min(dataOffset + chunkSize, data.count)
+            let chunk = data.subdata(in: dataOffset..<nextOffset)
+            dataOffset = nextOffset
+            return chunk
+
+        case .noStream:
+            return nil
+        }
+    }
+
+    func close() async {
+        isClosed = true
     }
 }

@@ -78,6 +78,9 @@ struct CommanderServersPaneView: View {
                 viewModel.folderToDelete = folder
                 viewModel.isShowingDeleteFolderAlert = true
             },
+            onRenameFolder: { folder in
+                viewModel.confirmRenameFolder(folder)
+            },
             onNewConnection: {
                 viewModel.isShowingNewConnectionSheet = true
             },

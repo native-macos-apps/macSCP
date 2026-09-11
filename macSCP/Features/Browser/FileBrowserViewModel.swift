@@ -100,7 +100,7 @@ final class FileBrowserViewModel {
     // MARK: - Dependencies
     private let sftpSession: SFTPSessionProtocol?
     private let s3Session: S3SessionProtocol?
-    private let fileRepository: FileRepositoryProtocol
+    let fileRepository: FileRepositoryProtocol
     private let clipboardService: ClipboardService
     private let navigationService = NavigationService()
 
@@ -906,6 +906,44 @@ final class FileBrowserViewModel {
     /// Removes a specific transfer from the recent list
     func removeTransfer(_ transfer: TransferProgress) {
         recentTransfers.removeAll { $0.id == transfer.id }
+    }
+
+    /// Registers a transfer and optionally its Task for tracking and cancellation
+    func trackTransfer(_ transfer: TransferProgress, task: Task<Void, Never>? = nil) {
+        activeTransfers[transfer.id] = transfer
+        if let task = task {
+            transferTasks[transfer.id] = task
+        }
+        isShowingTransfersPopover = true
+    }
+
+    /// Updates bytes transferred for an active transfer
+    func updateTransferProgress(id: UUID, bytesTransferred: Int64) {
+        guard activeTransfers[id] != nil else { return }
+        activeTransfers[id]?.bytesTransferred = bytesTransferred
+    }
+
+    /// Marks a transfer as completed and moves it to recent transfers
+    func completeTransfer(id: UUID, totalBytes: Int64) {
+        if var completedTransfer = activeTransfers.removeValue(forKey: id) {
+            completedTransfer.status = .completed
+            completedTransfer.bytesTransferred = totalBytes
+            recentTransfers.insert(completedTransfer, at: 0)
+            if recentTransfers.count > 10 {
+                recentTransfers = Array(recentTransfers.prefix(10))
+            }
+        }
+        transferTasks.removeValue(forKey: id)
+    }
+
+    /// Marks a transfer as failed or cancelled
+    func failTransfer(id: UUID, error: Error?, isCancelled: Bool) {
+        if var transfer = activeTransfers.removeValue(forKey: id) {
+            transfer.status = isCancelled ? .cancelled : .failed
+            transfer.error = isCancelled ? nil : error?.localizedDescription
+            recentTransfers.insert(transfer, at: 0)
+        }
+        transferTasks.removeValue(forKey: id)
     }
 
     // MARK: - File Content

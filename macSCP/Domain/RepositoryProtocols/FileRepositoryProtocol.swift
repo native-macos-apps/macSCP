@@ -52,4 +52,20 @@ protocol FileRepositoryProtocol: Sendable {
 
     /// Gets the real path (resolves symlinks and ~)
     func getRealPath(at path: String) async throws -> String
+
+    /// Opens a stream reader to read the file chunk-by-chunk without downloading to local disk
+    func openStreamReader(at path: String) async throws -> FileStreamReader
+
+    /// Writes data from a stream reader directly to the target path without using an intermediate local file
+    func writeStream(from reader: FileStreamReader, to path: String, totalSize: Int64?, progress: TransferProgressHandler?) async throws
+}
+
+extension FileRepositoryProtocol {
+    func openStreamReader(at path: String) async throws -> FileStreamReader {
+        throw AppError.unknown("Streaming not supported")
+    }
+
+    func writeStream(from reader: FileStreamReader, to path: String, totalSize: Int64?, progress: TransferProgressHandler?) async throws {
+        throw AppError.unknown("Streaming not supported")
+    }
 }

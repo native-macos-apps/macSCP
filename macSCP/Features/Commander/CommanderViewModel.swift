@@ -310,7 +310,7 @@ final class CommanderViewModel {
 
     // MARK: - Inter-Pane Transfers (Commander Actions)
 
-    func transfer(from sourcePos: PanePosition, to targetPos: PanePosition) {
+    func transfer(files: [RemoteFile]? = nil, from sourcePos: PanePosition, to targetPos: PanePosition) {
         let source = pane(for: sourcePos)
         let target = pane(for: targetPos)
 
@@ -320,14 +320,14 @@ final class CommanderViewModel {
             return
         }
 
-        let selected = sourceVM.selectedFilesList
-        guard !selected.isEmpty else {
+        let filesToTransfer = files ?? sourceVM.selectedFilesList
+        guard !filesToTransfer.isEmpty else {
             logInfo("No files selected for transfer", category: .ui)
             return
         }
 
         Task {
-            await performTransfer(files: selected, from: sourceVM, to: targetVM)
+            await performTransfer(files: filesToTransfer, from: sourceVM, to: targetVM)
         }
     }
 
@@ -336,52 +336,67 @@ final class CommanderViewModel {
         from sourceVM: FileBrowserViewModel,
         to targetVM: FileBrowserViewModel
     ) async {
-        let isSourceLocal = sourceVM.isLocal
-        let isTargetLocal = targetVM.isLocal
+        isShowingTransfersPopover = true
 
-        if isSourceLocal && !isTargetLocal {
-            // Local -> Remote (Upload)
-            let urls = files.map { URL(fileURLWithPath: $0.path) }
-            await targetVM.uploadDroppedFiles(urls)
-            await targetVM.refresh()
-        } else if !isSourceLocal && isTargetLocal {
-            // Remote -> Local (Download)
-            let targetDirURL = URL(fileURLWithPath: targetVM.currentPath)
-            for file in files {
-                let destURL = targetDirURL.appendingPathComponent(file.name)
-                try? await sourceVM.downloadFileToURL(file, destinationURL: destURL)
-            }
-            await targetVM.refresh()
-        } else if isSourceLocal && isTargetLocal {
-            // Local -> Local (Copy)
-            let targetDir = targetVM.currentPath
-            let fm = FileManager.default
-            for file in files {
-                let destPath = (targetDir as NSString).appendingPathComponent(file.name)
-                try? fm.copyItem(atPath: file.path, toPath: destPath)
-            }
-            await targetVM.refresh()
-        } else {
-            // Remote -> Remote (Download to temp then upload to target)
-            let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-            try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-            var downloadedURLs: [URL] = []
+        for file in files {
+            let transferId = UUID()
+            let destPath = (targetVM.currentPath as NSString).appendingPathComponent(file.name)
+            let transfer = TransferProgress(
+                id: transferId,
+                fileName: file.name,
+                localURL: targetVM.isLocal ? URL(fileURLWithPath: destPath) : (sourceVM.isLocal ? URL(fileURLWithPath: file.path) : nil),
+                remotePath: destPath,
+                bytesTransferred: 0,
+                totalBytes: file.size,
+                transferType: targetVM.isLocal ? .download : .upload,
+                status: .inProgress
+            )
 
-            for file in files {
-                let localDest = tempDir.appendingPathComponent(file.name)
-                try? await sourceVM.downloadFileToURL(file, destinationURL: localDest)
-                if FileManager.default.fileExists(atPath: localDest.path) {
-                    downloadedURLs.append(localDest)
+            let transferTask = Task {
+                do {
+                    try await RemoteStreamTransferEngine.transfer(
+                        file: file,
+                        from: sourceVM.fileRepository,
+                        to: targetVM.fileRepository,
+                        targetDirectory: targetVM.currentPath,
+                        progress: { bytesTransferred in
+                            Task { @MainActor in
+                                targetVM.updateTransferProgress(id: transferId, bytesTransferred: bytesTransferred)
+                            }
+                        }
+                    )
+
+                    await MainActor.run {
+                        targetVM.completeTransfer(id: transferId, totalBytes: file.size)
+                    }
+
+                    logInfo("Transfer completed: \(file.name)", category: .app)
+                } catch {
+                    let isCancelled = Task.isCancelled || error is CancellationError
+                    await MainActor.run {
+                        targetVM.failTransfer(id: transferId, error: error, isCancelled: isCancelled)
+                        if !isCancelled {
+                            self.error = AppError.from(error)
+                        }
+                    }
+                    logError("Transfer failed for \(file.name): \(error)", category: .app)
                 }
             }
 
-            if !downloadedURLs.isEmpty {
-                await targetVM.uploadDroppedFiles(downloadedURLs)
-                await targetVM.refresh()
+            await MainActor.run {
+                targetVM.trackTransfer(transfer, task: transferTask)
             }
 
-            try? FileManager.default.removeItem(at: tempDir)
+            _ = await transferTask.result
         }
+
+        await targetVM.refresh()
+    }
+
+    /// Transfers selected files from active pane to inactive opposite pane
+    func transferSelectedToOppositePane() {
+        let targetPos: PanePosition = activePanePosition == .left ? .right : .left
+        transfer(from: activePanePosition, to: targetPos)
     }
 
     // MARK: - Terminal Launcher
