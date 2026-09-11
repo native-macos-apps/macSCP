@@ -61,3 +61,123 @@ struct BatchTransferProgress: Identifiable, Sendable {
         return filesText
     }
 }
+
+/// Bundled batch progress data to dispatch to @MainActor at rate-limited intervals (~15fps)
+struct BatchProgressUpdate: Sendable {
+    let completedFiles: Int
+    let transferredBytes: Int64
+    let completedTransfers: [TransferProgress]
+    let topLevelFiles: [RemoteFile]
+}
+
+/// Thread-safe tracker that aggregates transfer progress across parallel streams
+/// and throttles UI dispatches to keep the MainActor and SwiftUI rendering fluid (~15fps).
+final class BatchProgressTracker: @unchecked Sendable {
+    private let lock = NSLock()
+    let totalFiles: Int
+    let totalBytes: Int64
+    private(set) var completedFiles: Int = 0
+    private(set) var completedBytes: Int64 = 0
+    private var activeBytes: [UUID: Int64] = [:]
+    private var pendingCompletedTransfers: [TransferProgress] = []
+    private var pendingTopLevelFiles: [RemoteFile] = []
+    private var lastUIUpdateTime: CFAbsoluteTime = 0
+    private let minUIUpdateInterval: CFAbsoluteTime = 0.066 // ~15 fps
+
+    init(totalFiles: Int, totalBytes: Int64) {
+        self.totalFiles = totalFiles
+        self.totalBytes = totalBytes
+    }
+
+    func registerActive(id: UUID) {
+        lock.lock()
+        defer { lock.unlock() }
+        activeBytes[id] = 0
+    }
+
+    func updateActiveBytes(id: UUID, bytes: Int64) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        activeBytes[id] = bytes
+        return checkShouldUpdateUI(force: false)
+    }
+
+    func completeFile(
+        id: UUID,
+        fileSize: Int64,
+        completedTransfer: TransferProgress? = nil,
+        topLevelFile: RemoteFile? = nil
+    ) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        completedFiles += 1
+        completedBytes += fileSize
+        activeBytes.removeValue(forKey: id)
+        if let transfer = completedTransfer {
+            pendingCompletedTransfers.append(transfer)
+        }
+        if let topFile = topLevelFile {
+            pendingTopLevelFiles.append(topFile)
+        }
+        return checkShouldUpdateUI(force: completedFiles >= totalFiles)
+    }
+
+    func failOrCancelFile(
+        id: UUID,
+        fileSize: Int64,
+        failedTransfer: TransferProgress? = nil
+    ) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        completedFiles += 1
+        completedBytes += fileSize
+        activeBytes.removeValue(forKey: id)
+        if let transfer = failedTransfer {
+            pendingCompletedTransfers.append(transfer)
+        }
+        return checkShouldUpdateUI(force: completedFiles >= totalFiles)
+    }
+
+    private func checkShouldUpdateUI(force: Bool) -> Bool {
+        let now = CFAbsoluteTimeGetCurrent()
+        if force || (now - lastUIUpdateTime) >= minUIUpdateInterval {
+            lastUIUpdateTime = now
+            return true
+        }
+        return false
+    }
+
+    func drainPendingUpdates() -> BatchProgressUpdate {
+        lock.lock()
+        defer { lock.unlock() }
+        let currentActive = activeBytes.values.reduce(0, +)
+        let totalTransferred = min(totalBytes, completedBytes + currentActive)
+        let transfers = pendingCompletedTransfers
+        let topFiles = pendingTopLevelFiles
+        pendingCompletedTransfers.removeAll(keepingCapacity: true)
+        pendingTopLevelFiles.removeAll(keepingCapacity: true)
+        return BatchProgressUpdate(
+            completedFiles: completedFiles,
+            transferredBytes: totalTransferred,
+            completedTransfers: transfers,
+            topLevelFiles: topFiles
+        )
+    }
+
+    func drainFinal() -> BatchProgressUpdate {
+        lock.lock()
+        defer { lock.unlock() }
+        activeBytes.removeAll()
+        let totalTransferred = min(totalBytes, completedBytes)
+        let transfers = pendingCompletedTransfers
+        let topFiles = pendingTopLevelFiles
+        pendingCompletedTransfers.removeAll()
+        pendingTopLevelFiles.removeAll()
+        return BatchProgressUpdate(
+            completedFiles: completedFiles,
+            transferredBytes: totalTransferred,
+            completedTransfers: transfers,
+            topLevelFiles: topFiles
+        )
+    }
+}
