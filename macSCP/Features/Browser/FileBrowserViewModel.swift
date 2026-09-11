@@ -31,7 +31,7 @@ final class FileBrowserViewModel {
 
     /// Total number of active transfers
     var activeTransferCount: Int {
-        activeTransfers.count
+        activeTransfers.values.reduce(0) { $0 + ($1.isDirectory ? max($1.itemCount, 1) : 1) }
     }
 
     /// All transfers for display (active + recent)
@@ -321,7 +321,10 @@ final class FileBrowserViewModel {
 
     /// Appends or updates a file in the files list without triggering full reload/loading state
     func appendFile(_ file: RemoteFile) {
-        if let idx = files.firstIndex(where: { $0.path == file.path || $0.name == file.name }) {
+        let cleanPath = file.path.trimmingCharacters(in: ["/"])
+        if let idx = files.firstIndex(where: {
+            $0.name == file.name || $0.path.trimmingCharacters(in: ["/"]) == cleanPath
+        }) {
             files[idx] = file
         } else {
             files.append(file)
@@ -700,25 +703,28 @@ final class FileBrowserViewModel {
         await uploadURLs(panel.urls)
     }
 
-    private func calculateTransferSize(for url: URL) -> Int64 {
+    private func calculateTransferStats(for url: URL) -> (totalBytes: Int64, itemCount: Int, isDirectory: Bool) {
         var isDir: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) else { return 0 }
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) else { return (0, 0, false) }
         if !isDir.boolValue {
-            return (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int64) ?? 0
+            let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int64) ?? 0
+            return (size, 1, false)
         }
         guard let enumerator = FileManager.default.enumerator(
             at: url,
             includingPropertiesForKeys: [.fileSizeKey, .isDirectoryKey],
             options: [.skipsHiddenFiles]
-        ) else { return 0 }
+        ) else { return (0, 1, true) }
         var total: Int64 = 0
+        var count = 0
         for case let fileURL as URL in enumerator {
             if let vals = try? fileURL.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey]),
                vals.isDirectory != true {
                 total += Int64(vals.fileSize ?? 0)
+                count += 1
             }
         }
-        return total
+        return (total, max(count, 1), true)
     }
 
     /// Core upload method that handles multiple files with progress tracking
@@ -728,8 +734,12 @@ final class FileBrowserViewModel {
         for url in urls {
             guard url.isFileURL else { continue }
 
+            let stats = calculateTransferStats(for: url)
+            let fileSize = stats.totalBytes
+            let isFolder = stats.isDirectory
+            let itemCount = stats.itemCount
+
             let remotePath = currentPath.appendingPathComponent(url.lastPathComponent)
-            let fileSize = calculateTransferSize(for: url)
 
             // Create transfer tracking entry
             let transferId = UUID()
@@ -741,7 +751,9 @@ final class FileBrowserViewModel {
                 bytesTransferred: 0,
                 totalBytes: fileSize,
                 transferType: .upload,
-                status: .inProgress
+                status: .inProgress,
+                isDirectory: isFolder,
+                itemCount: itemCount
             )
             activeTransfers[transferId] = transfer
 
@@ -785,28 +797,42 @@ final class FileBrowserViewModel {
                         self.transferTasks.removeValue(forKey: transferId)
                     }
 
-                    AnalyticsService.trackFileUploaded(protocol: .init(from: self.connection.connectionType), fileCount: 1, totalBytes: fileSize)
+                    AnalyticsService.trackFileUploaded(protocol: .init(from: self.connection.connectionType), fileCount: itemCount, totalBytes: fileSize)
                     logInfo("Uploaded: \(url.lastPathComponent)", category: self.connection.connectionType == .s3 ? .s3 : .sftp)
 
-                    // Append uploaded file to files list immediately without full reload
+                    // Append uploaded file or folder to files list immediately without full reload
+                    var destRemoteFile: RemoteFile
                     do {
-                        let uploadedFile = try await self.fileRepository.getFileInfo(at: remotePath)
-                        await MainActor.run {
-                            self.appendFile(uploadedFile)
+                        let fetched = try await self.fileRepository.getFileInfo(at: remotePath)
+                        if isFolder {
+                            let formattedPath = fetched.path.hasSuffix("/") ? fetched.path : fetched.path + "/"
+                            destRemoteFile = RemoteFile(
+                                name: url.lastPathComponent,
+                                path: formattedPath,
+                                isDirectory: true,
+                                size: 0,
+                                permissions: fetched.permissions.hasPrefix("d") ? fetched.permissions : "drwxr-xr-x",
+                                modificationDate: fetched.modificationDate ?? Date(),
+                                owner: fetched.owner,
+                                group: fetched.group
+                            )
+                        } else {
+                            destRemoteFile = fetched
                         }
                     } catch {
-                        var isDir: ObjCBool = false
-                        let isDirectory = FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) && isDir.boolValue
-                        let fallbackFile = RemoteFile(
+                        let formattedPath = (isFolder && !remotePath.hasSuffix("/")) ? remotePath + "/" : remotePath
+                        destRemoteFile = RemoteFile(
                             name: url.lastPathComponent,
-                            path: remotePath,
-                            isDirectory: isDirectory,
-                            size: fileSize,
-                            permissions: isDirectory ? "drwxr-xr-x" : "-rw-r--r--"
+                            path: formattedPath,
+                            isDirectory: isFolder,
+                            size: isFolder ? 0 : fileSize,
+                            permissions: isFolder ? "drwxr-xr-x" : "-rw-r--r--",
+                            modificationDate: Date()
                         )
-                        await MainActor.run {
-                            self.appendFile(fallbackFile)
-                        }
+                    }
+
+                    await MainActor.run {
+                        self.appendFile(destRemoteFile)
                     }
 
                 } catch {

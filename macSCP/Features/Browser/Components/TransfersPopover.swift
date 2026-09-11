@@ -128,11 +128,24 @@ struct TransferItemView: View {
 
             // File info and progress
             VStack(alignment: .leading, spacing: 4) {
-                Text(transfer.fileName)
-                    .font(.system(size: 12, weight: .medium))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                HStack(spacing: 4) {
+                    if transfer.isDirectory {
+                        Image(systemName: "folder.fill")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.blue)
+                    }
+                    Text(transfer.fileName)
+                        .font(.system(size: 12, weight: .medium))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+
+                    if transfer.isDirectory && transfer.itemCount > 0 {
+                        Text("(\(transfer.itemCount) \(transfer.itemCount == 1 ? "item" : "items"))")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
 
                 if transfer.isInProgress {
                     ProgressView(value: transfer.fractionCompleted)
@@ -151,7 +164,7 @@ struct TransferItemView: View {
                             .foregroundStyle(.secondary)
                     }
                 } else if transfer.isComplete {
-                    Text(transfer.totalSizeText)
+                    Text(transfer.isDirectory ? "\(transfer.itemCount) \(transfer.itemCount == 1 ? "item" : "items") • \(transfer.totalSizeText)" : transfer.totalSizeText)
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
                 } else if transfer.status == .failed {

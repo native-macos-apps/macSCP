@@ -341,6 +341,7 @@ final class CommanderViewModel {
         for file in files {
             let transferId = UUID()
             let destPath = (targetVM.currentPath as NSString).appendingPathComponent(file.name)
+            let isFolder = file.isDirectory
             let transfer = TransferProgress(
                 id: transferId,
                 fileName: file.name,
@@ -349,7 +350,9 @@ final class CommanderViewModel {
                 bytesTransferred: 0,
                 totalBytes: file.size,
                 transferType: targetVM.isLocal ? .download : .upload,
-                status: .inProgress
+                status: .inProgress,
+                isDirectory: isFolder,
+                itemCount: 1
             )
 
             let transferTask = Task {
@@ -371,24 +374,38 @@ final class CommanderViewModel {
                     }
 
                     let destPath = targetVM.currentPath.appendingPathComponent(file.name)
-                    if let destFile = try? await targetVM.fileRepository.getFileInfo(at: destPath) {
-                        await MainActor.run {
-                            targetVM.appendFile(destFile)
+                    var destFile: RemoteFile
+                    if let fetched = try? await targetVM.fileRepository.getFileInfo(at: destPath) {
+                        if isFolder {
+                            let formattedPath = fetched.path.hasSuffix("/") ? fetched.path : fetched.path + "/"
+                            destFile = RemoteFile(
+                                name: file.name,
+                                path: formattedPath,
+                                isDirectory: true,
+                                size: 0,
+                                permissions: fetched.permissions.hasPrefix("d") ? fetched.permissions : (file.permissions.hasPrefix("d") ? file.permissions : "drwxr-xr-x"),
+                                modificationDate: fetched.modificationDate ?? Date(),
+                                owner: fetched.owner ?? file.owner,
+                                group: fetched.group ?? file.group
+                            )
+                        } else {
+                            destFile = fetched
                         }
                     } else {
-                        let fallbackFile = RemoteFile(
+                        let formattedPath = (isFolder && !destPath.hasSuffix("/")) ? destPath + "/" : destPath
+                        destFile = RemoteFile(
                             name: file.name,
-                            path: destPath,
-                            isDirectory: file.isDirectory,
-                            size: file.size,
-                            permissions: file.permissions,
+                            path: formattedPath,
+                            isDirectory: isFolder,
+                            size: isFolder ? 0 : file.size,
+                            permissions: isFolder ? (file.permissions.hasPrefix("d") ? file.permissions : "drwxr-xr-x") : file.permissions,
                             modificationDate: Date(),
                             owner: file.owner,
                             group: file.group
                         )
-                        await MainActor.run {
-                            targetVM.appendFile(fallbackFile)
-                        }
+                    }
+                    await MainActor.run {
+                        targetVM.appendFile(destFile)
                     }
 
                     logInfo("Transfer completed: \(file.name)", category: .app)

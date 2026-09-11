@@ -58,9 +58,12 @@ final class RemoteStreamTransferEngine: Sendable {
         from sourceRepo: FileRepositoryProtocol,
         to targetRepo: FileRepositoryProtocol,
         targetDirPath: String,
-        progress: TransferProgressHandler? = nil
+        progress: TransferProgressHandler? = nil,
+        tracker: CumulativeTransferTracker? = nil
     ) async throws {
         try Task.checkCancellation()
+
+        let activeTracker = tracker ?? CumulativeTransferTracker(progress: progress)
 
         // Create directory on target repository (ignore if already exists)
         try? await targetRepo.createDirectory(at: targetDirPath)
@@ -79,7 +82,8 @@ final class RemoteStreamTransferEngine: Sendable {
                     from: sourceRepo,
                     to: targetRepo,
                     targetDirPath: childTargetPath,
-                    progress: progress
+                    progress: progress,
+                    tracker: activeTracker
                 )
             } else {
                 let reader = try await sourceRepo.openStreamReader(at: entry.path)
@@ -90,14 +94,18 @@ final class RemoteStreamTransferEngine: Sendable {
                     }
                 }
 
+                activeTracker.startFile()
                 try await targetRepo.writeStream(
                     from: reader,
                     to: childTargetPath,
                     totalSize: entry.size,
-                    progress: progress
+                    progress: { fileBytes in
+                        activeTracker.updateCurrentFile(bytes: fileBytes)
+                    }
                 )
                 await reader.close()
                 closed = true
+                activeTracker.finishFile(size: entry.size)
             }
         }
     }

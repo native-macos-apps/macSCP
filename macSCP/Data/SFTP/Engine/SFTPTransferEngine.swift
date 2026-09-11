@@ -53,8 +53,10 @@ final class SFTPTransferEngine: Sendable {
         localDirURL: URL,
         chunkSize: UInt32,
         windowSize: Int,
-        progress: TransferProgressHandler?
+        progress: TransferProgressHandler?,
+        tracker: CumulativeTransferTracker? = nil
     ) async throws {
+        let activeTracker = tracker ?? CumulativeTransferTracker(progress: progress)
         try FileManager.default.createDirectory(at: localDirURL, withIntermediateDirectories: true)
         let entries = try await client.listDirectory(at: remoteDirPath)
 
@@ -73,18 +75,24 @@ final class SFTPTransferEngine: Sendable {
                     localDirURL: childLocal,
                     chunkSize: chunkSize,
                     windowSize: windowSize,
-                    progress: progress
+                    progress: progress,
+                    tracker: activeTracker
                 )
             } else {
+                let fileSize = entry.attributes.size ?? 0
+                activeTracker.startFile()
                 try await downloadSingleFile(
                     client: client,
                     remotePath: childRemote,
                     localURL: childLocal,
-                    fileSize: entry.attributes.size ?? 0,
+                    fileSize: fileSize,
                     chunkSize: chunkSize,
                     windowSize: windowSize,
-                    progress: progress
+                    progress: { fileBytes in
+                        activeTracker.updateCurrentFile(bytes: fileBytes)
+                    }
                 )
+                activeTracker.finishFile(size: Int64(fileSize))
             }
         }
     }
@@ -227,8 +235,11 @@ final class SFTPTransferEngine: Sendable {
         remoteDirPath: String,
         chunkSize: UInt32,
         windowSize: Int,
-        progress: TransferProgressHandler?
+        progress: TransferProgressHandler?,
+        tracker: CumulativeTransferTracker? = nil
     ) async throws {
+        let activeTracker = tracker ?? CumulativeTransferTracker(progress: progress)
+
         // Create remote directory if not exists
         try? await client.createDirectory(at: remoteDirPath)
 
@@ -254,11 +265,13 @@ final class SFTPTransferEngine: Sendable {
                     remoteDirPath: itemRemotePath,
                     chunkSize: chunkSize,
                     windowSize: windowSize,
-                    progress: progress
+                    progress: progress,
+                    tracker: activeTracker
                 )
             } else {
                 let attrs = try fileManager.attributesOfItem(atPath: item.path)
                 let itemSize = attrs[.size] as? UInt64 ?? 0
+                activeTracker.startFile()
                 try await uploadSingleFile(
                     client: client,
                     localURL: item,
@@ -266,8 +279,11 @@ final class SFTPTransferEngine: Sendable {
                     fileSize: itemSize,
                     chunkSize: chunkSize,
                     windowSize: windowSize,
-                    progress: progress
+                    progress: { fileBytes in
+                        activeTracker.updateCurrentFile(bytes: fileBytes)
+                    }
                 )
+                activeTracker.finishFile(size: Int64(itemSize))
             }
         }
     }

@@ -16,6 +16,8 @@ struct TransferProgress: Identifiable, Sendable {
     let totalBytes: Int64
     let startTime: Date
     let transferType: TransferType
+    var isDirectory: Bool
+    var itemCount: Int
 
     /// Number of bytes transferred so far
     var bytesTransferred: Int64
@@ -35,7 +37,9 @@ struct TransferProgress: Identifiable, Sendable {
         totalBytes: Int64,
         transferType: TransferType = .upload,
         status: TransferStatus = .inProgress,
-        startTime: Date = Date()
+        startTime: Date = Date(),
+        isDirectory: Bool = false,
+        itemCount: Int = 1
     ) {
         self.id = id
         self.fileName = fileName
@@ -46,6 +50,8 @@ struct TransferProgress: Identifiable, Sendable {
         self.transferType = transferType
         self.status = status
         self.startTime = startTime
+        self.isDirectory = isDirectory
+        self.itemCount = itemCount
     }
 
     /// Progress as a fraction (0.0 to 1.0)
@@ -99,3 +105,41 @@ enum TransferType: Sendable {
 
 /// Type alias for progress callback - receives bytes transferred
 typealias TransferProgressHandler = @Sendable (_ bytesTransferred: Int64) -> Void
+
+/// Thread-safe tracker to accumulate progress across multiple files in a recursive directory transfer
+final class CumulativeTransferTracker: @unchecked Sendable {
+    private let lock = NSLock()
+    private var baseOffset: Int64 = 0
+    private var currentFileBytes: Int64 = 0
+    private let progress: TransferProgressHandler?
+
+    init(progress: TransferProgressHandler?) {
+        self.progress = progress
+    }
+
+    func startFile() {
+        lock.lock()
+        baseOffset += currentFileBytes
+        currentFileBytes = 0
+        let total = baseOffset
+        lock.unlock()
+        progress?(total)
+    }
+
+    func updateCurrentFile(bytes: Int64) {
+        lock.lock()
+        currentFileBytes = bytes
+        let total = baseOffset + currentFileBytes
+        lock.unlock()
+        progress?(total)
+    }
+
+    func finishFile(size: Int64) {
+        lock.lock()
+        baseOffset += size
+        currentFileBytes = 0
+        let total = baseOffset
+        lock.unlock()
+        progress?(total)
+    }
+}

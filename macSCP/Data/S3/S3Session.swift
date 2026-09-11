@@ -674,6 +674,8 @@ actor S3Session: S3SessionProtocol {
             options: []
         ) else { return }
 
+        let activeTracker = CumulativeTransferTracker(progress: progress)
+
         for case let fileURL as URL in enumerator {
             try Task.checkCancellation()
 
@@ -684,7 +686,13 @@ actor S3Session: S3SessionProtocol {
             if resourceValues.isDirectory == true {
                 try? await createDirectory(at: destRemotePath)
             } else {
-                try await uploadSingleFile(from: fileURL, to: destRemotePath, progress: progress)
+                let attrs = try fileManager.attributesOfItem(atPath: fileURL.path)
+                let itemSize = (attrs[.size] as? Int64) ?? 0
+                activeTracker.startFile()
+                try await uploadSingleFile(from: fileURL, to: destRemotePath, progress: { bytes in
+                    activeTracker.updateCurrentFile(bytes: bytes)
+                })
+                activeTracker.finishFile(size: itemSize)
             }
         }
     }
