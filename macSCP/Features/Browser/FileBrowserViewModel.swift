@@ -508,15 +508,23 @@ final class FileBrowserViewModel {
         }
     }
 
-    func deleteFiles(_ files: [RemoteFile]) async {
+    nonisolated private static func executeDelete(
+        files: [RemoteFile],
+        repository: FileRepositoryProtocol
+    ) async throws {
         for file in files {
-            do {
-                try await fileRepository.delete(at: file.path, isDirectory: file.isDirectory)
-            } catch {
-                logError("Failed to delete \(file.name): \(error)", category: .sftp)
-                self.error = AppError.from(error)
-                return
-            }
+            try await repository.delete(at: file.path, isDirectory: file.isDirectory)
+        }
+    }
+
+    func deleteFiles(_ files: [RemoteFile]) async {
+        let repository = self.fileRepository
+        do {
+            try await Self.executeDelete(files: files, repository: repository)
+        } catch {
+            logError("Failed to delete files: \(error)", category: .sftp)
+            self.error = AppError.from(error)
+            return
         }
 
         isShowingDeleteConfirmation = false
@@ -574,30 +582,45 @@ final class FileBrowserViewModel {
         return try await s3Session.presignedURL(for: file.path, expiresIn: expiresIn)
     }
 
+    nonisolated private static func executePaste(
+        items: [ClipboardItem],
+        isCut: Bool,
+        destinationBasePath: String,
+        repository: FileRepositoryProtocol
+    ) async throws {
+        for item in items {
+            let destinationPath = destinationBasePath.appendingPathComponent(item.fileName)
+            if isCut {
+                try await repository.move(from: item.fullSourcePath, to: destinationPath)
+            } else {
+                try await repository.copy(
+                    from: item.fullSourcePath,
+                    to: destinationPath,
+                    isDirectory: item.isDirectory
+                )
+            }
+        }
+    }
+
     func paste() async {
         guard canPaste else { return }
 
         let items = clipboardService.items
         let isCut = clipboardService.isCut
+        let destinationBasePath = currentPath
+        let repository = self.fileRepository
 
-        for item in items {
-            let destinationPath = currentPath.appendingPathComponent(item.fileName)
-
-            do {
-                if isCut {
-                    try await fileRepository.move(from: item.fullSourcePath, to: destinationPath)
-                } else {
-                    try await fileRepository.copy(
-                        from: item.fullSourcePath,
-                        to: destinationPath,
-                        isDirectory: item.isDirectory
-                    )
-                }
-            } catch {
-                logError("Failed to paste \(item.fileName): \(error)", category: .sftp)
-                self.error = AppError.from(error)
-                return
-            }
+        do {
+            try await Self.executePaste(
+                items: items,
+                isCut: isCut,
+                destinationBasePath: destinationBasePath,
+                repository: repository
+            )
+        } catch {
+            logError("Failed to paste: \(error)", category: .sftp)
+            self.error = AppError.from(error)
+            return
         }
 
         if isCut {
@@ -636,6 +659,8 @@ final class FileBrowserViewModel {
         activeTransfers[transferId] = transfer
         isShowingTransfersPopover = true
 
+        let throttler = SingleTransferThrottler(interval: 0.1)
+
         let downloadTask = Task { [weak self] in
             guard let self = self else { return }
 
@@ -644,9 +669,11 @@ final class FileBrowserViewModel {
 
                 try await self.fileRepository.download(remotePath: file.path, to: url) { [weak self] bytesTransferred in
                     guard let self else { return }
-                    Task { @MainActor in
-                        guard self.activeTransfers[transferId] != nil else { return }
-                        self.activeTransfers[transferId]?.bytesTransferred = bytesTransferred
+                    if throttler.shouldUpdate() {
+                        Task { @MainActor in
+                            guard self.activeTransfers[transferId] != nil else { return }
+                            self.activeTransfers[transferId]?.bytesTransferred = bytesTransferred
+                        }
                     }
                 }
 
@@ -721,8 +748,13 @@ final class FileBrowserViewModel {
         let isTopLevel: Bool
     }
 
-    /// Core upload method that handles multiple files and directories with per-file progress tracking
-    private func uploadURLs(_ urls: [URL]) async {
+    private struct ScannedUploadData: Sendable {
+        let directoriesToCreate: [String]
+        let topLevelFolders: [(name: String, remotePath: String)]
+        let filesToUpload: [PendingUploadFile]
+    }
+
+    nonisolated private static func scanLocalURLs(_ urls: [URL], currentPath: String) -> ScannedUploadData {
         var directoriesToCreate: [String] = []
         var topLevelFolders: [(name: String, remotePath: String)] = []
         var filesToUpload: [PendingUploadFile] = []
@@ -784,6 +816,70 @@ final class FileBrowserViewModel {
             }
         }
 
+        return ScannedUploadData(
+            directoriesToCreate: directoriesToCreate,
+            topLevelFolders: topLevelFolders,
+            filesToUpload: filesToUpload
+        )
+    }
+
+    nonisolated private static func createRemoteDirectories(
+        _ directoriesToCreate: [String],
+        repository: FileRepositoryProtocol
+    ) async {
+        guard !directoriesToCreate.isEmpty else { return }
+        let uniqueDirs = Array(NSOrderedSet(array: directoriesToCreate)) as? [String] ?? directoriesToCreate
+        let sortedDirs = uniqueDirs.sorted { $0.components(separatedBy: "/").count < $1.components(separatedBy: "/").count }
+        let dirsByDepth = Dictionary(grouping: sortedDirs) { $0.components(separatedBy: "/").count }
+        let depths = dirsByDepth.keys.sorted()
+        for depth in depths {
+            if let dirsAtDepth = dirsByDepth[depth] {
+                await withTaskGroup(of: Void.self) { dirGroup in
+                    for dir in dirsAtDepth {
+                        dirGroup.addTask {
+                            try? await repository.createDirectory(at: dir)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    nonisolated private static func executeBatchUploadCoordinator(
+        files: [PendingUploadFile],
+        directoriesToCreate: [String],
+        maxConcurrent: Int,
+        repository: FileRepositoryProtocol,
+        connectionType: ConnectionType,
+        tracker: BatchProgressTracker,
+        onUpdate: @escaping @Sendable (BatchProgressSnapshot) -> Void
+    ) async {
+        await createRemoteDirectories(directoriesToCreate, repository: repository)
+
+        await processBatchUpload(
+            files: files,
+            maxConcurrent: maxConcurrent,
+            repository: repository,
+            connectionType: connectionType,
+            tracker: tracker,
+            onUpdate: onUpdate
+        )
+
+        let finalSnapshot = tracker.drainFinal(isCancelled: tracker.isBatchCancelled)
+        onUpdate(finalSnapshot)
+    }
+
+    /// Core upload method that handles multiple files and directories with per-file progress tracking
+    private func uploadURLs(_ urls: [URL]) async {
+        let currentPath = self.currentPath
+        let scanned = await Task.detached(priority: .userInitiated) {
+            Self.scanLocalURLs(urls, currentPath: currentPath)
+        }.value
+
+        let filesToUpload = scanned.filesToUpload
+        let topLevelFolders = scanned.topLevelFolders
+        let directoriesToCreate = scanned.directoriesToCreate
+
         self.isBatchCancelled = false
         let totalFilesCount = filesToUpload.count
         let totalBytesSum = filesToUpload.reduce(0) { $0 + $1.fileSize }
@@ -806,26 +902,7 @@ final class FileBrowserViewModel {
             isShowingTransfersPopover = true
         }
 
-        // 1. Create all necessary remote directories (parents first, parallel per depth level)
-        if !directoriesToCreate.isEmpty {
-            let uniqueDirs = Array(NSOrderedSet(array: directoriesToCreate)) as? [String] ?? directoriesToCreate
-            let sortedDirs = uniqueDirs.sorted { $0.components(separatedBy: "/").count < $1.components(separatedBy: "/").count }
-            let dirsByDepth = Dictionary(grouping: sortedDirs) { $0.components(separatedBy: "/").count }
-            let depths = dirsByDepth.keys.sorted()
-            for depth in depths {
-                if let dirsAtDepth = dirsByDepth[depth] {
-                    await withTaskGroup(of: Void.self) { dirGroup in
-                        for dir in dirsAtDepth {
-                            dirGroup.addTask { [weak self] in
-                                try? await self?.fileRepository.createDirectory(at: dir)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // 2. Immediately append top-level folders to current directory view
+        // Immediately append top-level folders to current directory view
         for folder in topLevelFolders {
             let formattedPath = folder.remotePath.hasSuffix("/") ? folder.remotePath : folder.remotePath + "/"
             let folderFile = RemoteFile(
@@ -839,7 +916,15 @@ final class FileBrowserViewModel {
             appendFile(folderFile)
         }
 
-        guard !filesToUpload.isEmpty else { return }
+        guard !filesToUpload.isEmpty else {
+            if !directoriesToCreate.isEmpty {
+                let repository = self.fileRepository
+                Task.detached {
+                    await Self.createRemoteDirectories(directoriesToCreate, repository: repository)
+                }
+            }
+            return
+        }
 
         let tracker = BatchProgressTracker(
             batchId: batchId,
@@ -859,8 +944,9 @@ final class FileBrowserViewModel {
             }
         }
 
-        await Self.processBatchUpload(
+        await Self.executeBatchUploadCoordinator(
             files: filesToUpload,
+            directoriesToCreate: directoriesToCreate,
             maxConcurrent: maxConcurrent,
             repository: repository,
             connectionType: connectionType,
@@ -868,12 +954,6 @@ final class FileBrowserViewModel {
             onUpdate: onUpdate
         )
 
-        let finalSnapshot = tracker.drainFinal(isCancelled: self.isBatchCancelled)
-        self.applyBatchSnapshot(finalSnapshot)
-        if var batch = self.activeBatch, batch.id == batchId, batch.isInProgress {
-            batch.status = self.isBatchCancelled ? .cancelled : .completed
-            self.activeBatch = batch
-        }
         self.currentBatchTracker = nil
     }
 
@@ -1111,12 +1191,16 @@ final class FileBrowserViewModel {
         activeTransfers[transferId] = transfer
         isShowingTransfersPopover = true
 
+        let throttler = SingleTransferThrottler(interval: 0.1)
+
         do {
             try await fileRepository.download(remotePath: file.path, to: destinationURL) { [weak self] bytesTransferred in
                 guard let self else { return }
-                Task { @MainActor in
-                    guard self.activeTransfers[transferId] != nil else { return }
-                    self.activeTransfers[transferId]?.bytesTransferred = bytesTransferred
+                if throttler.shouldUpdate() {
+                    Task { @MainActor in
+                        guard self.activeTransfers[transferId] != nil else { return }
+                        self.activeTransfers[transferId]?.bytesTransferred = bytesTransferred
+                    }
                 }
             }
 

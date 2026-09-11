@@ -284,3 +284,26 @@ final class BatchProgressTracker: @unchecked Sendable {
         )
     }
 }
+
+/// Thread-safe rate limiter for single file transfers (downloads/uploads)
+/// to throttle progress callbacks to the UI thread (default: 0.1s / 10fps).
+final class SingleTransferThrottler: @unchecked Sendable {
+    private let lock = NSLock()
+    private var lastTime: CFAbsoluteTime = 0
+    private let interval: CFAbsoluteTime
+
+    init(interval: CFAbsoluteTime = 0.1) {
+        self.interval = interval
+    }
+
+    func shouldUpdate() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        let now = CFAbsoluteTimeGetCurrent()
+        if now - lastTime >= interval {
+            lastTime = now
+            return true
+        }
+        return false
+    }
+}

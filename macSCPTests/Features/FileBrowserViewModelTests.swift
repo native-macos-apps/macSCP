@@ -513,4 +513,24 @@ final class FileBrowserViewModelTests: XCTestCase {
         XCTAssertEqual(sut.activeBatch?.id, currentBatchId)
         XCTAssertEqual(sut.activeBatch?.completedFiles, 0)
     }
+
+    func testSingleTransferThrottler_ThrottlesHighFrequencyCalls() async {
+        let throttler = SingleTransferThrottler(interval: 0.05)
+        // First call should return true
+        XCTAssertTrue(throttler.shouldUpdate())
+
+        // Immediate subsequent calls within interval should return false
+        var throttledCount = 0
+        for _ in 0..<50 {
+            if throttler.shouldUpdate() {
+                throttledCount += 1
+            }
+        }
+        // At most 0 or 1 updates could pass in a fast loop
+        XCTAssertLessThanOrEqual(throttledCount, 1)
+
+        // After waiting greater than interval, next call should return true
+        try? await Task.sleep(nanoseconds: 60_000_000)
+        XCTAssertTrue(throttler.shouldUpdate())
+    }
 }

@@ -374,7 +374,14 @@ final class CommanderViewModel {
         let isTopLevel: Bool
     }
 
-    private func collectRemoteItems(
+    private struct ScannedCommanderItems: Sendable {
+        let itemsToTransfer: [PendingCommanderTransfer]
+        let directoriesToCreate: [String]
+        let topLevelFolders: [RemoteFile]
+        let topLevelDirectoryNames: [String]
+    }
+
+    nonisolated private static func collectRemoteItems(
         sourceDir: RemoteFile,
         relativePrefix: String,
         targetBaseDir: String,
@@ -409,25 +416,20 @@ final class CommanderViewModel {
         }
     }
 
-
-    private func performTransfer(
+    nonisolated private static func scanCommanderTransfer(
         files: [RemoteFile],
-        from sourceVM: FileBrowserViewModel,
-        to targetVM: FileBrowserViewModel
-    ) async {
-        isShowingTransfersPopover = true
-        self.isBatchCancelled = false
-
+        targetBasePath: String,
+        sourceRepo: FileRepositoryProtocol
+    ) async -> ScannedCommanderItems {
         var directoriesToCreate: [String] = []
         var itemsToTransfer: [PendingCommanderTransfer] = []
+        var topLevelFolders: [RemoteFile] = []
         var topLevelDirectoryNames: [String] = []
 
         for file in files {
-            let destPath = (targetVM.currentPath as NSString).appendingPathComponent(file.name)
+            let destPath = (targetBasePath as NSString).appendingPathComponent(file.name)
             if file.isDirectory {
                 topLevelDirectoryNames.append(file.name)
-                // 1. Create root folder
-                try? await targetVM.fileRepository.createDirectory(at: destPath)
                 let formattedPath = destPath.hasSuffix("/") ? destPath : destPath + "/"
                 let destFolder = RemoteFile(
                     name: file.name,
@@ -439,23 +441,20 @@ final class CommanderViewModel {
                     owner: file.owner,
                     group: file.group
                 )
-                await MainActor.run {
-                    targetVM.appendFile(destFolder)
-                }
+                topLevelFolders.append(destFolder)
+                directoriesToCreate.append(destPath)
 
-                // 2. Recursively gather all directories and files
                 do {
                     try await collectRemoteItems(
                         sourceDir: file,
                         relativePrefix: file.name,
                         targetBaseDir: destPath,
-                        sourceRepo: sourceVM.fileRepository,
+                        sourceRepo: sourceRepo,
                         directoriesToCreate: &directoriesToCreate,
                         filesToTransfer: &itemsToTransfer
                     )
                 } catch {
                     logError("Failed to enumerate directory \(file.name): \(error)", category: .app)
-                    self.error = AppError.from(error)
                     continue
                 }
             } else {
@@ -468,7 +467,105 @@ final class CommanderViewModel {
             }
         }
 
-        guard !itemsToTransfer.isEmpty else { return }
+        return ScannedCommanderItems(
+            itemsToTransfer: itemsToTransfer,
+            directoriesToCreate: directoriesToCreate,
+            topLevelFolders: topLevelFolders,
+            topLevelDirectoryNames: topLevelDirectoryNames
+        )
+    }
+
+    nonisolated private static func createTargetDirectories(
+        directories: [String],
+        targetRepo: FileRepositoryProtocol
+    ) async {
+        guard !directories.isEmpty else { return }
+        let uniqueDirs = Array(NSOrderedSet(array: directories)) as? [String] ?? directories
+        let sortedDirs = uniqueDirs.sorted { $0.components(separatedBy: "/").count < $1.components(separatedBy: "/").count }
+        let dirsByDepth = Dictionary(grouping: sortedDirs) { $0.components(separatedBy: "/").count }
+        let depths = dirsByDepth.keys.sorted()
+        for depth in depths {
+            if let dirsAtDepth = dirsByDepth[depth] {
+                await withTaskGroup(of: Void.self) { dirGroup in
+                    for dir in dirsAtDepth {
+                        dirGroup.addTask {
+                            try? await targetRepo.createDirectory(at: dir)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    nonisolated private static func executeBatchTransferCoordinator(
+        items: [PendingCommanderTransfer],
+        directoriesToCreate: [String],
+        maxConcurrent: Int,
+        sourceRepo: FileRepositoryProtocol,
+        targetRepo: FileRepositoryProtocol,
+        isTargetLocal: Bool,
+        isSourceLocal: Bool,
+        tracker: BatchProgressTracker,
+        onUpdate: @escaping @Sendable (BatchProgressSnapshot) -> Void,
+        onError: @escaping @Sendable (AppError) -> Void
+    ) async {
+        await createTargetDirectories(directories: directoriesToCreate, targetRepo: targetRepo)
+
+        await processBatchTransfer(
+            items: items,
+            maxConcurrent: maxConcurrent,
+            sourceRepo: sourceRepo,
+            targetRepo: targetRepo,
+            isTargetLocal: isTargetLocal,
+            isSourceLocal: isSourceLocal,
+            tracker: tracker,
+            onUpdate: onUpdate,
+            onError: onError
+        )
+
+        let finalSnapshot = tracker.drainFinal(isCancelled: tracker.isBatchCancelled)
+        onUpdate(finalSnapshot)
+    }
+
+    private func performTransfer(
+        files: [RemoteFile],
+        from sourceVM: FileBrowserViewModel,
+        to targetVM: FileBrowserViewModel
+    ) async {
+        isShowingTransfersPopover = true
+        self.isBatchCancelled = false
+
+        let targetBasePath = targetVM.currentPath
+        let sourceRepo = sourceVM.fileRepository
+        let targetRepo = targetVM.fileRepository
+        let isTargetLocal = targetVM.isLocal
+        let isSourceLocal = sourceVM.isLocal
+        let initialRecent = targetVM.recentTransfers
+
+        let scanned = await Task.detached(priority: .userInitiated) {
+            await Self.scanCommanderTransfer(
+                files: files,
+                targetBasePath: targetBasePath,
+                sourceRepo: sourceRepo
+            )
+        }.value
+
+        for folder in scanned.topLevelFolders {
+            targetVM.appendFile(folder)
+        }
+
+        let itemsToTransfer = scanned.itemsToTransfer
+        let directoriesToCreate = scanned.directoriesToCreate
+        let topLevelDirectoryNames = scanned.topLevelDirectoryNames
+
+        guard !itemsToTransfer.isEmpty else {
+            if !directoriesToCreate.isEmpty {
+                Task.detached {
+                    await Self.createTargetDirectories(directories: directoriesToCreate, targetRepo: targetRepo)
+                }
+            }
+            return
+        }
 
         let totalFilesCount = itemsToTransfer.count
         let totalBytesSum = itemsToTransfer.reduce(0) { $0 + $1.sourceFile.size }
@@ -486,38 +583,15 @@ final class CommanderViewModel {
             )
         }
 
-        // Create all subdirectories (parallel per depth level)
-        if !directoriesToCreate.isEmpty {
-            let uniqueDirs = Array(NSOrderedSet(array: directoriesToCreate)) as? [String] ?? directoriesToCreate
-            let sortedDirs = uniqueDirs.sorted { $0.components(separatedBy: "/").count < $1.components(separatedBy: "/").count }
-            let dirsByDepth = Dictionary(grouping: sortedDirs) { $0.components(separatedBy: "/").count }
-            let depths = dirsByDepth.keys.sorted()
-            for depth in depths {
-                if let dirsAtDepth = dirsByDepth[depth] {
-                    await withTaskGroup(of: Void.self) { dirGroup in
-                        for dir in dirsAtDepth {
-                            dirGroup.addTask {
-                                try? await targetVM.fileRepository.createDirectory(at: dir)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
         let tracker = BatchProgressTracker(
             batchId: batchId,
             totalFiles: itemsToTransfer.count,
             totalBytes: totalBytesSum,
-            initialRecent: targetVM.recentTransfers
+            initialRecent: initialRecent
         )
         self.currentBatchTracker = tracker
 
         let maxConcurrent = TransferSettings.shared.maxConcurrentTransfers
-        let sourceRepo = sourceVM.fileRepository
-        let targetRepo = targetVM.fileRepository
-        let isTargetLocal = targetVM.isLocal
-        let isSourceLocal = sourceVM.isLocal
 
         let onUpdate: @Sendable (BatchProgressSnapshot) -> Void = { [weak self, weak targetVM] snapshot in
             Task { @MainActor [weak self, weak targetVM] in
@@ -531,8 +605,9 @@ final class CommanderViewModel {
             }
         }
 
-        await Self.processBatchTransfer(
+        await Self.executeBatchTransferCoordinator(
             items: itemsToTransfer,
+            directoriesToCreate: directoriesToCreate,
             maxConcurrent: maxConcurrent,
             sourceRepo: sourceRepo,
             targetRepo: targetRepo,
@@ -543,12 +618,6 @@ final class CommanderViewModel {
             onError: onError
         )
 
-        let finalSnapshot = tracker.drainFinal(isCancelled: self.isBatchCancelled)
-        self.applyBatchSnapshot(finalSnapshot, targetVM: targetVM)
-        if var batch = self.activeBatch, batch.id == batchId, batch.isInProgress {
-            batch.status = self.isBatchCancelled ? .cancelled : .completed
-            self.activeBatch = batch
-        }
         self.currentBatchTracker = nil
     }
 
