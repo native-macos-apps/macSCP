@@ -836,7 +836,6 @@ final class FileBrowserViewModel {
 
         guard !filesToUpload.isEmpty else { return }
 
-        let tracker = BatchProgressTracker(totalFiles: totalFilesCount, totalBytes: totalBytesSum)
         let maxConcurrent = TransferSettings.shared.maxConcurrentTransfers
 
         await withTaskGroup(of: Void.self) { group in
@@ -846,7 +845,7 @@ final class FileBrowserViewModel {
                 let file = filesToUpload[fileIndex]
                 fileIndex += 1
                 group.addTask { [weak self] in
-                    await self?.uploadSingleFile(file, tracker: tracker)
+                    await self?.uploadSingleFile(file)
                 }
             }
 
@@ -858,19 +857,13 @@ final class FileBrowserViewModel {
                     let file = filesToUpload[fileIndex]
                     fileIndex += 1
                     group.addTask { [weak self] in
-                        await self?.uploadSingleFile(file, tracker: tracker)
+                        await self?.uploadSingleFile(file)
                     }
                 }
             }
         }
 
-        let finalUpdate = tracker.drainFinal()
         await MainActor.run {
-            self.applyBatchProgressUpdate(finalUpdate)
-            for item in finalUpdate.completedTransfers {
-                self.activeTransfers.removeValue(forKey: item.id)
-                self.transferTasks.removeValue(forKey: item.id)
-            }
             if var batch = self.activeBatch, batch.isInProgress {
                 batch.status = self.isBatchCancelled ? .cancelled : .completed
                 if !self.isBatchCancelled {
@@ -882,33 +875,14 @@ final class FileBrowserViewModel {
         }
     }
 
-    @MainActor
-    func applyBatchProgressUpdate(
-        _ update: BatchProgressUpdate,
-        currentActiveId: UUID? = nil,
-        currentBytes: Int64? = nil
-    ) {
-        if let currentActiveId, let currentBytes {
-            self.activeTransfers[currentActiveId]?.bytesTransferred = currentBytes
-        }
-        self.activeBatch?.completedFiles = update.completedFiles
-        self.activeBatch?.transferredBytes = update.transferredBytes
-
-        for transfer in update.completedTransfers {
-            self.activeTransfers.removeValue(forKey: transfer.id)
-            self.transferTasks.removeValue(forKey: transfer.id)
-            self.recentTransfers.insert(transfer, at: 0)
-        }
-        if self.recentTransfers.count > 30 {
-            self.recentTransfers = Array(self.recentTransfers.prefix(30))
-        }
-
-        for topFile in update.topLevelFiles {
-            self.appendFile(topFile)
-        }
+    private func updateBatchTransferredBytes() {
+        guard var batch = activeBatch else { return }
+        let activeBytes = activeTransfers.values.reduce(0) { $0 + $1.bytesTransferred }
+        batch.transferredBytes = min(batch.totalBytes, batch.completedBytes + activeBytes)
+        self.activeBatch = batch
     }
 
-    private func uploadSingleFile(_ file: PendingUploadFile, tracker: BatchProgressTracker) async {
+    private func uploadSingleFile(_ file: PendingUploadFile) async {
         if isBatchCancelled || Task.isCancelled { return }
 
         let transferId = UUID()
@@ -925,7 +899,7 @@ final class FileBrowserViewModel {
             itemCount: 1
         )
 
-        tracker.registerActive(id: transferId)
+        var lastProgressUpdateTime: CFAbsoluteTime = 0
 
         let uploadTask = Task { [weak self] in
             guard let self = self else { return }
@@ -935,19 +909,19 @@ final class FileBrowserViewModel {
 
                 try await self.fileRepository.upload(localURL: file.localURL, to: file.remotePath) { [weak self] bytesTransferred in
                     guard let self else { return }
-                    if tracker.updateActiveBytes(id: transferId, bytes: bytesTransferred) {
-                        let update = tracker.drainPendingUpdates()
+                    let now = CFAbsoluteTimeGetCurrent()
+                    let isCompleted = bytesTransferred >= file.fileSize
+                    if isCompleted || (now - lastProgressUpdateTime) >= 0.08 {
+                        lastProgressUpdateTime = now
                         Task { @MainActor [weak self] in
-                            self?.applyBatchProgressUpdate(update, currentActiveId: transferId, currentBytes: bytesTransferred)
+                            guard let self, self.activeTransfers[transferId] != nil else { return }
+                            self.activeTransfers[transferId]?.bytesTransferred = bytesTransferred
+                            self.updateBatchTransferredBytes()
                         }
                     }
                 }
 
                 try Task.checkCancellation()
-
-                var completedTransfer = transfer
-                completedTransfer.status = .completed
-                completedTransfer.bytesTransferred = file.fileSize
 
                 var destRemoteFile: RemoteFile? = nil
                 if file.isTopLevel {
@@ -961,17 +935,13 @@ final class FileBrowserViewModel {
                     )
                 }
 
-                let shouldUpdate = tracker.completeFile(
-                    id: transferId,
-                    fileSize: file.fileSize,
-                    completedTransfer: completedTransfer,
-                    topLevelFile: destRemoteFile
-                )
-
-                if shouldUpdate {
-                    let update = tracker.drainPendingUpdates()
-                    Task { @MainActor [weak self] in
-                        self?.applyBatchProgressUpdate(update)
+                await MainActor.run {
+                    self.completeTransfer(id: transferId, totalBytes: file.fileSize)
+                    self.activeBatch?.completedFiles += 1
+                    self.activeBatch?.completedBytes += file.fileSize
+                    self.updateBatchTransferredBytes()
+                    if let destRemoteFile {
+                        self.appendFile(destRemoteFile)
                     }
                 }
 
@@ -982,21 +952,11 @@ final class FileBrowserViewModel {
                     Task.isCancelled ||
                     String(describing: error).contains("CancellationError")
 
-                var failedTransfer = transfer
-                failedTransfer.status = isCancellation ? .cancelled : .failed
-                failedTransfer.error = isCancellation ? nil : error.localizedDescription
-
-                let shouldUpdate = tracker.failOrCancelFile(
-                    id: transferId,
-                    fileSize: file.fileSize,
-                    failedTransfer: failedTransfer
-                )
-
-                if shouldUpdate {
-                    let update = tracker.drainPendingUpdates()
-                    Task { @MainActor [weak self] in
-                        self?.applyBatchProgressUpdate(update)
-                    }
+                await MainActor.run {
+                    self.failTransfer(id: transferId, error: error, isCancelled: isCancellation)
+                    self.activeBatch?.completedFiles += 1
+                    self.activeBatch?.completedBytes += file.fileSize
+                    self.updateBatchTransferredBytes()
                 }
 
                 if isCancellation {
@@ -1007,8 +967,7 @@ final class FileBrowserViewModel {
             }
         }
 
-        Task { @MainActor [weak self] in
-            guard let self = self else { return }
+        await MainActor.run {
             self.trackTransfer(transfer, task: uploadTask)
         }
 
