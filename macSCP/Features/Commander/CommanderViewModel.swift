@@ -370,6 +370,27 @@ final class CommanderViewModel {
                         targetVM.completeTransfer(id: transferId, totalBytes: file.size)
                     }
 
+                    let destPath = targetVM.currentPath.appendingPathComponent(file.name)
+                    if let destFile = try? await targetVM.fileRepository.getFileInfo(at: destPath) {
+                        await MainActor.run {
+                            targetVM.appendFile(destFile)
+                        }
+                    } else {
+                        let fallbackFile = RemoteFile(
+                            name: file.name,
+                            path: destPath,
+                            isDirectory: file.isDirectory,
+                            size: file.size,
+                            permissions: file.permissions,
+                            modificationDate: Date(),
+                            owner: file.owner,
+                            group: file.group
+                        )
+                        await MainActor.run {
+                            targetVM.appendFile(fallbackFile)
+                        }
+                    }
+
                     logInfo("Transfer completed: \(file.name)", category: .app)
                 } catch {
                     let isCancelled = Task.isCancelled || error is CancellationError
@@ -389,8 +410,6 @@ final class CommanderViewModel {
 
             _ = await transferTask.result
         }
-
-        await targetVM.refresh()
     }
 
     /// Transfers selected files from active pane to inactive opposite pane

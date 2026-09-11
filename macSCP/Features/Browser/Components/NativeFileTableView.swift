@@ -626,7 +626,6 @@ struct NativeFileTableView: NSViewRepresentable {
 
                 Task { @MainActor in
                     await viewModel.uploadDroppedFiles(valid)
-                    await viewModel.refresh()
                 }
                 return true
             }

@@ -319,8 +319,24 @@ final class FileBrowserViewModel {
 
     // MARK: - Navigation
 
-    func loadFiles() async {
-        state = .loading
+    /// Appends or updates a file in the files list without triggering full reload/loading state
+    func appendFile(_ file: RemoteFile) {
+        if let idx = files.firstIndex(where: { $0.path == file.path || $0.name == file.name }) {
+            files[idx] = file
+        } else {
+            files.append(file)
+        }
+        if case .loading = state {
+            state = .success(())
+        } else if case .idle = state {
+            state = .success(())
+        }
+    }
+
+    func loadFiles(showLoading: Bool = false) async {
+        if showLoading || files.isEmpty {
+            state = .loading
+        }
 
         do {
             files = try await fileRepository.listFiles(at: currentPath)
@@ -412,7 +428,7 @@ final class FileBrowserViewModel {
     }
 
     func refresh() async {
-        await loadFiles()
+        await loadFiles(showLoading: false)
     }
 
     private func navigateWithoutHistory(to path: String) async {
@@ -772,6 +788,27 @@ final class FileBrowserViewModel {
                     AnalyticsService.trackFileUploaded(protocol: .init(from: self.connection.connectionType), fileCount: 1, totalBytes: fileSize)
                     logInfo("Uploaded: \(url.lastPathComponent)", category: self.connection.connectionType == .s3 ? .s3 : .sftp)
 
+                    // Append uploaded file to files list immediately without full reload
+                    do {
+                        let uploadedFile = try await self.fileRepository.getFileInfo(at: remotePath)
+                        await MainActor.run {
+                            self.appendFile(uploadedFile)
+                        }
+                    } catch {
+                        var isDir: ObjCBool = false
+                        let isDirectory = FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) && isDir.boolValue
+                        let fallbackFile = RemoteFile(
+                            name: url.lastPathComponent,
+                            path: remotePath,
+                            isDirectory: isDirectory,
+                            size: fileSize,
+                            permissions: isDirectory ? "drwxr-xr-x" : "-rw-r--r--"
+                        )
+                        await MainActor.run {
+                            self.appendFile(fallbackFile)
+                        }
+                    }
+
                 } catch {
                     // Check if this was a cancellation (either direct CancellationError or Task was cancelled)
                     let isCancellation = error is CancellationError ||
@@ -812,8 +849,6 @@ final class FileBrowserViewModel {
             // Wait for this upload to complete before starting the next one
             await uploadTask.value
         }
-
-        await loadFiles()
     }
 
     /// Cancels an active transfer
