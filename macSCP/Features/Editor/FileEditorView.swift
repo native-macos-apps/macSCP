@@ -16,12 +16,10 @@ struct FileEditorView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Header
-            EditorHeaderView(viewModel: viewModel)
-
+            // Divider separating titlebar from editor content
             Divider()
 
-            // Search bar (conditional)
+            // Search bar (conditional, slides in directly under titlebar like TextEdit find banner)
             if viewModel.isShowingSearch {
                 SearchReplaceBar(viewModel: viewModel)
                 Divider()
@@ -29,6 +27,42 @@ struct FileEditorView: View {
 
             // Editor content
             EditorContentView(viewModel: viewModel)
+                .contextMenu {
+                    Button {
+                        Task {
+                            await viewModel.save()
+                        }
+                    } label: {
+                        Label("Save", systemImage: "square.and.arrow.down")
+                    }
+                    .keyboardShortcut("s", modifiers: .command)
+                    .disabled(!viewModel.hasChanges)
+
+                    Button {
+                        viewModel.toggleSearch()
+                    } label: {
+                        Label("Find…", systemImage: "magnifyingglass")
+                    }
+                    .keyboardShortcut("f", modifiers: .command)
+
+                    Divider()
+
+                    Button {
+                        Task {
+                            await viewModel.reload()
+                        }
+                    } label: {
+                        Label("Reload from Server", systemImage: "arrow.clockwise")
+                    }
+                    .keyboardShortcut("r", modifiers: [.command, .shift])
+
+                    Button {
+                        viewModel.revertChanges()
+                    } label: {
+                        Label("Revert to Saved", systemImage: "arrow.uturn.backward")
+                    }
+                    .disabled(!viewModel.hasChanges)
+                }
 
             Divider()
 
@@ -37,25 +71,30 @@ struct FileEditorView: View {
         }
         .frame(minWidth: WindowSize.fileEditor.width, minHeight: WindowSize.fileEditor.height)
         .errorAlert($viewModel.error)
-        .toolbar {
-            ToolbarItemGroup(placement: .primaryAction) {
-                Button {
-                    viewModel.toggleSearch()
-                } label: {
-                    Image(systemName: "magnifyingglass")
-                }
-                .keyboardShortcut("f", modifiers: .command)
-
-                Button {
+        .background {
+            // Keyboard shortcuts
+            Group {
+                Button("Save") {
                     Task {
                         await viewModel.save()
                     }
-                } label: {
-                    Image(systemName: "square.and.arrow.down")
                 }
                 .keyboardShortcut("s", modifiers: .command)
-                .disabled(!viewModel.hasChanges)
+
+                Button("Find") {
+                    viewModel.toggleSearch()
+                }
+                .keyboardShortcut("f", modifiers: .command)
+
+                Button("Reload") {
+                    Task {
+                        await viewModel.reload()
+                    }
+                }
+                .keyboardShortcut("r", modifiers: [.command, .shift])
             }
+            .frame(width: 0, height: 0)
+            .opacity(0)
         }
     }
 }

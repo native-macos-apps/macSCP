@@ -28,18 +28,49 @@ struct EditorStatusBar: View {
                 StatItem(label: "Characters", value: "\(viewModel.characterCount)")
             }
 
-            // Save status
-            if viewModel.state.isLoading {
-                ProgressView()
-                    .controlSize(.small)
-            } else if viewModel.hasChanges {
-                Text("Modified")
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-            } else {
-                Text("Saved")
-                    .font(.caption)
-                    .foregroundStyle(.green)
+            // Status and actions
+            HStack(spacing: UIConstants.smallSpacing) {
+                if viewModel.state.isLoading {
+                    ProgressView()
+                        .controlSize(.small)
+                } else if viewModel.hasChanges {
+                    Button {
+                        Task {
+                            await viewModel.save()
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Circle()
+                                .fill(.orange)
+                                .frame(width: 6, height: 6)
+                            Text("Save")
+                                .font(.caption)
+                        }
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Save changes (⌘S)")
+                } else {
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(.green)
+                            .frame(width: 6, height: 6)
+                        Text("Saved")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Button {
+                    Task {
+                        await viewModel.reload()
+                    }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.caption)
+                }
+                .buttonStyle(.borderless)
+                .disabled(viewModel.state.isLoading)
+                .help("Reload from server (⇧⌘R)")
             }
         }
         .padding(.horizontal)

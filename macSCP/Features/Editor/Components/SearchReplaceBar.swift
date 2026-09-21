@@ -79,6 +79,8 @@ struct SearchReplaceBar: View {
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
+                .keyboardShortcut(.cancelAction)
+                .help("Close search (Esc)")
             }
 
             // Replace row

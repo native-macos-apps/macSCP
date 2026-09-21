@@ -36,6 +36,9 @@ struct FileEditorWindow: View {
             } else if let viewModel = viewModel {
                 FileEditorView(viewModel: viewModel)
                     .navigationTitle(viewModel.fileName)
+                    .background {
+                        EditorWindowAccessor(viewModel: viewModel)
+                    }
             } else if let error = connectionError {
                 ErrorView(error: error) {
                     Task {
