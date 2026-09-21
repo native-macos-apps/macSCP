@@ -7,7 +7,7 @@
 
 import Foundation
 
-enum AppError: LocalizedError, Sendable {
+enum AppError: LocalizedError, Sendable, Equatable {
     // Connection errors
     case connectionFailed(String)
     case connectionTimeout

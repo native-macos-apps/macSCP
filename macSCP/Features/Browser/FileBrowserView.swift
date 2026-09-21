@@ -266,12 +266,16 @@ struct FileBrowserView: View {
             }
 
         case .error(let error):
-            ErrorView(error: error) {
-                Task {
-                    if viewModel.isConnected {
-                        await viewModel.refresh()
-                    } else {
-                        await viewModel.connect()
+            if viewModel.isLocal && error == .permissionDenied {
+                LocalPermissionRequestView(viewModel: viewModel)
+            } else {
+                ErrorView(error: error) {
+                    Task {
+                        if viewModel.isConnected {
+                            await viewModel.refresh()
+                        } else {
+                            await viewModel.connect()
+                        }
                     }
                 }
             }

@@ -249,7 +249,7 @@ final class FileBrowserViewModel {
         if isLocal {
             isConnected = true
             if currentPath.isEmpty || currentPath == "/" {
-                currentPath = FileManager.default.homeDirectoryForCurrentUser.path
+                currentPath = LocalFileRepository.userHomeDirectory
             }
             navigationService.reset(to: currentPath)
             AnalyticsService.trackFileBrowserOpened(protocol: .local)
@@ -434,7 +434,7 @@ final class FileBrowserViewModel {
 
     func goHome() async {
         if isLocal {
-            await navigateTo(FileManager.default.homeDirectoryForCurrentUser.path)
+            await navigateTo(LocalFileRepository.userHomeDirectory)
         } else {
             await navigateTo("~")
         }

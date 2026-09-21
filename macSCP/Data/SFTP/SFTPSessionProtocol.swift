@@ -7,7 +7,7 @@
 
 import Foundation
 
-protocol SFTPSessionProtocol: Sendable {
+nonisolated protocol SFTPSessionProtocol: Sendable {
     /// Whether the session is currently connected
     var isConnected: Bool { get async }
 

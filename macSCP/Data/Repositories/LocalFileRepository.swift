@@ -10,9 +10,11 @@ import Foundation
 final class LocalFileRepository: FileRepositoryProtocol, @unchecked Sendable {
     private let fileManager = FileManager.default
 
-    init() {}
+    init() {
+        LocalBookmarkService.shared.restoreAccess()
+    }
 
-    // MARK: - Home Directory Detection
+    // MARK: - Directory Detection
 
     /// Returns the true home directory of the current user account (e.g. `/Users/username`),
     /// avoiding any sandbox container paths.
@@ -28,6 +30,20 @@ final class LocalFileRepository: FileRepositoryProtocol, @unchecked Sendable {
             return expanded
         }
         return FileManager.default.homeDirectoryForCurrentUser.path
+    }
+
+    /// Returns the Downloads directory of the current user account (e.g. `/Users/username/Downloads`),
+    /// which has built-in read-write sandbox entitlement.
+    static var downloadsDirectory: String {
+        let home = userHomeDirectory
+        let standardDownloads = (home as NSString).appendingPathComponent("Downloads")
+        if FileManager.default.fileExists(atPath: standardDownloads) {
+            return standardDownloads
+        }
+        if let url = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first {
+            return url.path
+        }
+        return standardDownloads
     }
 
     // MARK: - Path Resolution

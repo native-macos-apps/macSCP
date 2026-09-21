@@ -7,7 +7,7 @@
 
 import Foundation
 
-protocol S3SessionProtocol: Sendable {
+nonisolated protocol S3SessionProtocol: Sendable {
     /// Whether the session is currently connected
     var isConnected: Bool { get async }
 

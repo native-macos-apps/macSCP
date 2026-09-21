@@ -125,38 +125,42 @@ struct CommanderFileBrowserPaneView: View {
             }
 
         case .error(let error):
-            VStack(spacing: 14) {
-                ErrorView(error: error) {
-                    Task {
-                        if viewModel.isConnected {
-                            await viewModel.refresh()
-                        } else {
-                            await viewModel.connect()
-                        }
-                    }
-                }
-
-                if viewModel.isLocal {
-                    HStack(spacing: 10) {
-                        Button {
-                            chooseLocalFolder()
-                        } label: {
-                            Label("Choose Folder…", systemImage: "folder")
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-
-                        Button {
-                            Task {
-                                await viewModel.navigateTo(LocalFileRepository.userHomeDirectory)
+            if viewModel.isLocal && error == .permissionDenied {
+                LocalPermissionRequestView(viewModel: viewModel)
+            } else {
+                VStack(spacing: 14) {
+                    ErrorView(error: error) {
+                        Task {
+                            if viewModel.isConnected {
+                                await viewModel.refresh()
+                            } else {
+                                await viewModel.connect()
                             }
-                        } label: {
-                            Label("Go to Home (~)", systemImage: "house")
                         }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
                     }
-                    .padding(.bottom, 16)
+
+                    if viewModel.isLocal {
+                        HStack(spacing: 10) {
+                            Button {
+                                chooseLocalFolder()
+                            } label: {
+                                Label("Choose Folder…", systemImage: "folder")
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+
+                            Button {
+                                Task {
+                                    await viewModel.navigateTo(LocalFileRepository.userHomeDirectory)
+                                }
+                            } label: {
+                                Label("Go to Home (~)", systemImage: "house")
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                        }
+                        .padding(.bottom, 16)
+                    }
                 }
             }
         }
@@ -172,6 +176,11 @@ struct CommanderFileBrowserPaneView: View {
         panel.directoryURL = URL(fileURLWithPath: LocalFileRepository.userHomeDirectory)
         panel.begin { response in
             if response == .OK, let url = panel.url {
+                do {
+                    try LocalBookmarkService.shared.saveBookmark(for: url)
+                } catch {
+                    logError("Failed to save bookmark for folder: \(error)", category: .app)
+                }
                 Task {
                     await viewModel.navigateTo(url.path)
                 }

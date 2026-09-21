@@ -19,6 +19,7 @@ struct MacSCPApp: App {
     init() {
         AnalyticsService.initialize()
         AppLockManager.shared.lockIfNeeded()
+        LocalBookmarkService.shared.restoreAccess()
 
         let controller = SPUStandardUpdaterController(
             startingUpdater: true,
