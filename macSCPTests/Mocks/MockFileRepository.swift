@@ -30,6 +30,7 @@ final class MockFileRepository: FileRepositoryProtocol, @unchecked Sendable {
     var lastCreateDirectoryPath: String?
     var lastCreateFilePath: String?
     var lastDeletePath: String?
+    var deletedPaths: [String] = []
     var lastRenameSourcePath: String?
     var lastRenameDestPath: String?
     var lastCopySourcePath: String?
@@ -90,6 +91,7 @@ final class MockFileRepository: FileRepositoryProtocol, @unchecked Sendable {
     func delete(at path: String, isDirectory: Bool) async throws {
         deleteCalled = true
         lastDeletePath = path
+        deletedPaths.append(path)
         if let error = mockError { throw error }
     }
 

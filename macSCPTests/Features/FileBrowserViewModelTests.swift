@@ -533,4 +533,54 @@ final class FileBrowserViewModelTests: XCTestCase {
         try? await Task.sleep(nanoseconds: 60_000_000)
         XCTAssertTrue(throttler.shouldUpdate())
     }
+
+    func testConfirmDeleteMultipleFiles_SetsFilesToDeleteAndShowsConfirmation() {
+        let file1 = RemoteFile(name: "file1.txt", path: "/file1.txt", isDirectory: false, size: 100, permissions: "-rw-r--r--")
+        let folder1 = RemoteFile(name: "folder1", path: "/folder1", isDirectory: true, size: 0, permissions: "drwxr-xr-x")
+        let file2 = RemoteFile(name: "file2.txt", path: "/file2.txt", isDirectory: false, size: 200, permissions: "-rw-r--r--")
+
+        sut.confirmDelete([file1, folder1, file2])
+
+        XCTAssertTrue(sut.isShowingDeleteConfirmation)
+        XCTAssertEqual(sut.filesToDelete.count, 3)
+        XCTAssertEqual(sut.filesToDelete.map { $0.path }, ["/file1.txt", "/folder1", "/file2.txt"])
+    }
+
+    func testDeleteFiles_DeletesAllProvidedFiles() async {
+        let file1 = RemoteFile(name: "file1.txt", path: "/file1.txt", isDirectory: false, size: 100, permissions: "-rw-r--r--")
+        let folder1 = RemoteFile(name: "folder1", path: "/folder1", isDirectory: true, size: 0, permissions: "drwxr-xr-x")
+        mockFileRepository.mockFiles = [file1, folder1]
+        await sut.connect()
+        await sut.loadFiles()
+        sut.selectedFiles = [file1.id, folder1.id]
+
+        sut.confirmDelete([file1, folder1])
+        await sut.deleteFiles(sut.filesToDelete)
+
+        XCTAssertFalse(sut.isShowingDeleteConfirmation)
+        XCTAssertTrue(sut.filesToDelete.isEmpty)
+        XCTAssertTrue(sut.selectedFiles.isEmpty)
+        XCTAssertEqual(mockFileRepository.deletedPaths, ["/file1.txt", "/folder1"])
+    }
+
+    func testCopyFiles_SetsSelectedFilesAndCopiesAll() {
+        let file1 = RemoteFile(name: "file1.txt", path: "/file1.txt", isDirectory: false, size: 100, permissions: "-rw-r--r--")
+        let file2 = RemoteFile(name: "file2.txt", path: "/file2.txt", isDirectory: false, size: 200, permissions: "-rw-r--r--")
+
+        sut.copyFiles([file1, file2])
+
+        XCTAssertTrue(mockClipboardService.isCopy)
+        XCTAssertEqual(mockClipboardService.fileCount, 2)
+        XCTAssertEqual(sut.selectedFiles, [file1.id, file2.id])
+    }
+
+    func testCutFiles_SetsSelectedFilesAndCutsAll() {
+        let file1 = RemoteFile(name: "file1.txt", path: "/file1.txt", isDirectory: false, size: 100, permissions: "-rw-r--r--")
+        let file2 = RemoteFile(name: "file2.txt", path: "/file2.txt", isDirectory: false, size: 200, permissions: "-rw-r--r--")
+
+        sut.cutFiles([file1, file2])
+
+        XCTAssertTrue(mockClipboardService.isCut)
+        XCTAssertEqual(sut.selectedFiles, [file1.id, file2.id])
+    }
 }

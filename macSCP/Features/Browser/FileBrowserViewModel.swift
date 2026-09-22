@@ -548,6 +548,16 @@ final class FileBrowserViewModel {
         clipboardService.cut(files: selectedFilesList, from: currentPath, connectionId: connection.id)
     }
 
+    func copyFiles(_ files: [RemoteFile]) {
+        selectedFiles = Set(files.map { $0.id })
+        clipboardService.copy(files: files, from: currentPath, connectionId: connection.id)
+    }
+
+    func cutFiles(_ files: [RemoteFile]) {
+        selectedFiles = Set(files.map { $0.id })
+        clipboardService.cut(files: files, from: currentPath, connectionId: connection.id)
+    }
+
     func copyS3ObjectURL(for file: RemoteFile) async {
         do {
             let url = try await s3ObjectURL(for: file)
