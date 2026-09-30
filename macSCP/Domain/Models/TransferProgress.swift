@@ -28,6 +28,12 @@ struct TransferProgress: Identifiable, Sendable {
     /// Error if the transfer failed
     var error: String?
 
+    /// Number of retry attempts made
+    var retryAttempt: Int
+
+    /// Maximum retries configured for this transfer
+    var maxRetries: Int
+
     init(
         id: UUID = UUID(),
         fileName: String,
@@ -39,7 +45,10 @@ struct TransferProgress: Identifiable, Sendable {
         status: TransferStatus = .inProgress,
         startTime: Date = Date(),
         isDirectory: Bool = false,
-        itemCount: Int = 1
+        itemCount: Int = 1,
+        error: String? = nil,
+        retryAttempt: Int = 0,
+        maxRetries: Int = 0
     ) {
         self.id = id
         self.fileName = fileName
@@ -52,6 +61,9 @@ struct TransferProgress: Identifiable, Sendable {
         self.startTime = startTime
         self.isDirectory = isDirectory
         self.itemCount = itemCount
+        self.error = error
+        self.retryAttempt = retryAttempt
+        self.maxRetries = maxRetries
     }
 
     /// Progress as a fraction (0.0 to 1.0)

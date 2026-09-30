@@ -102,7 +102,7 @@ struct CommanderWorkspaceView: View {
                 }
                 .overlay(alignment: .topTrailing) {
                     if viewModel.activeTransferCount > 0 {
-                        Text("\(viewModel.activeTransferCount)")
+                        Text(viewModel.activeTransferBadgeText)
                             .font(.system(size: 9, weight: .bold))
                             .foregroundStyle(.white)
                             .padding(.horizontal, 4)

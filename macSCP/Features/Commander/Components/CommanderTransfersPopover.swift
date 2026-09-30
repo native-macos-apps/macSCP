@@ -10,24 +10,42 @@ import SwiftUI
 struct CommanderTransfersPopover: View {
     @Bindable var viewModel: CommanderViewModel
 
+    private var allTransfersList: [TransferProgress] {
+        let active = viewModel.allActiveTransfers
+        let recent = viewModel.allRecentTransfers
+        let recentIds = Set(recent.map { $0.id })
+        let extraFailed = (viewModel.currentActiveBatch?.failedTransfers ?? []).filter { !recentIds.contains($0.id) }
+        return Array((active + extraFailed + recent).prefix(60))
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             header
             Divider()
 
-            if let batch = viewModel.currentActiveBatch, batch.isInProgress {
-                BatchTransferHeaderView(batch: batch) {
-                    viewModel.cancelBatch()
-                }
+            if let batch = viewModel.currentActiveBatch {
+                BatchTransferHeaderView(
+                    batch: batch,
+                    activeCount: viewModel.allActiveTransfers.count,
+                    onCancel: {
+                        viewModel.cancelBatch()
+                    },
+                    onRetryFailed: {
+                        Task { await viewModel.retryFailedTransfers() }
+                    },
+                    onClear: {
+                        viewModel.clearCompletedTransfers()
+                    }
+                )
                 Divider()
             }
 
-            if viewModel.allActiveTransfers.isEmpty && viewModel.allRecentTransfers.isEmpty && viewModel.currentActiveBatch == nil {
+            if allTransfersList.isEmpty && viewModel.currentActiveBatch == nil {
                 emptyState
             } else {
                 ScrollView {
                     LazyVStack(spacing: 0) {
-                        ForEach(viewModel.allActiveTransfers + viewModel.allRecentTransfers) { transfer in
+                        ForEach(allTransfersList) { transfer in
                             TransferItemView(
                                 transfer: transfer,
                                 onCancel: {
@@ -38,8 +56,10 @@ struct CommanderTransfersPopover: View {
                                 }
                             )
 
-                            Divider()
-                                .padding(.leading, 54)
+                            if transfer.id != allTransfersList.last?.id {
+                                Divider()
+                                    .padding(.leading, 54)
+                            }
                         }
                     }
                 }

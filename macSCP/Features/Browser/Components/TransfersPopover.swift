@@ -19,10 +19,20 @@ struct TransfersPopover: View {
             header
             Divider()
 
-            if let batch = viewModel.activeBatch, batch.isInProgress {
-                BatchTransferHeaderView(batch: batch) {
-                    viewModel.cancelBatch()
-                }
+            if let batch = viewModel.activeBatch {
+                BatchTransferHeaderView(
+                    batch: batch,
+                    activeCount: viewModel.activeTransfers.count,
+                    onCancel: {
+                        viewModel.cancelBatch()
+                    },
+                    onRetryFailed: {
+                        Task { await viewModel.retryFailedTransfers() }
+                    },
+                    onClear: {
+                        viewModel.clearCompletedTransfers()
+                    }
+                )
                 Divider()
             }
 
@@ -99,7 +109,8 @@ struct TransfersPopover: View {
 
     @ViewBuilder
     private var transferItems: some View {
-        ForEach(viewModel.allTransfers) { transfer in
+        let items = Array(viewModel.allTransfers.prefix(60))
+        ForEach(items) { transfer in
             TransferItemView(
                 transfer: transfer,
                 onCancel: {
@@ -110,7 +121,7 @@ struct TransfersPopover: View {
                 }
             )
 
-            if transfer.id != viewModel.allTransfers.last?.id {
+            if transfer.id != items.last?.id {
                 Divider()
                     .padding(.leading, 54) // Aligns with filename: 16 padding + 10 spacing + 28 icon
             }
@@ -287,7 +298,7 @@ struct TransfersToolbarButton: View {
         }
         .overlay(alignment: .topTrailing) {
             if viewModel.activeTransferCount > 0 {
-                Text("\(viewModel.activeTransferCount)")
+                Text(viewModel.activeTransferBadgeText)
                     .font(.system(size: 9, weight: .bold))
                     .foregroundStyle(.white)
                     .padding(.horizontal, 4)

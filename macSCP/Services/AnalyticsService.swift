@@ -54,14 +54,44 @@ enum AnalyticsService {
 
     // MARK: - Cumulative Stats
 
-    private(set) static var totalConnectionsCreated: Int {
-        get { UserDefaults.standard.integer(forKey: StorageKey.totalConnectionsCreated) }
-        set { UserDefaults.standard.set(newValue, forKey: StorageKey.totalConnectionsCreated) }
+    nonisolated(unsafe) private static let statsLock = NSLock()
+
+    nonisolated private(set) static var totalConnectionsCreated: Int {
+        get {
+            statsLock.lock()
+            defer { statsLock.unlock() }
+            return UserDefaults.standard.integer(forKey: StorageKey.totalConnectionsCreated)
+        }
+        set {
+            statsLock.lock()
+            defer { statsLock.unlock() }
+            UserDefaults.standard.set(newValue, forKey: StorageKey.totalConnectionsCreated)
+        }
     }
 
-    private(set) static var totalFilesTransferred: Int {
-        get { UserDefaults.standard.integer(forKey: StorageKey.totalFilesTransferred) }
-        set { UserDefaults.standard.set(newValue, forKey: StorageKey.totalFilesTransferred) }
+    nonisolated private(set) static var totalFilesTransferred: Int {
+        get {
+            statsLock.lock()
+            defer { statsLock.unlock() }
+            return UserDefaults.standard.integer(forKey: StorageKey.totalFilesTransferred)
+        }
+        set {
+            statsLock.lock()
+            defer { statsLock.unlock() }
+            UserDefaults.standard.set(newValue, forKey: StorageKey.totalFilesTransferred)
+        }
+    }
+
+    /// Atomically increments the transferred file count and returns the updated total.
+    @discardableResult
+    nonisolated static func incrementFilesTransferred(by count: Int = 1) -> Int {
+        guard count > 0 else { return totalFilesTransferred }
+        statsLock.lock()
+        defer { statsLock.unlock() }
+        let current = UserDefaults.standard.integer(forKey: StorageKey.totalFilesTransferred)
+        let updated = current + count
+        UserDefaults.standard.set(updated, forKey: StorageKey.totalFilesTransferred)
+        return updated
     }
 
     // MARK: - Configuration
@@ -91,10 +121,14 @@ enum AnalyticsService {
     // MARK: - Connection Tracking
 
     static func trackConnectionCreated(protocol: ConnectionProtocol) {
-        totalConnectionsCreated += 1
+        statsLock.lock()
+        let current = UserDefaults.standard.integer(forKey: StorageKey.totalConnectionsCreated) + 1
+        UserDefaults.standard.set(current, forKey: StorageKey.totalConnectionsCreated)
+        statsLock.unlock()
+
         track(.connectionCreated, with: [
             "protocol": `protocol`.rawValue,
-            "total_connections_created": "\(totalConnectionsCreated)"
+            "total_connections_created": "\(current)"
         ])
     }
 
@@ -114,23 +148,41 @@ enum AnalyticsService {
 
     // MARK: - File Transfer Tracking
 
-    static func trackFileUploaded(protocol: ConnectionProtocol, fileCount: Int, totalBytes: Int64) {
-        totalFilesTransferred += fileCount
+    nonisolated static func trackFileUploaded(protocol: ConnectionProtocol, fileCount: Int, totalBytes: Int64) {
+        let newTotal = incrementFilesTransferred(by: fileCount)
         track(.fileUploaded, with: [
             "protocol": `protocol`.rawValue,
             "file_count": "\(fileCount)",
             "size_category": sizeCategory(for: totalBytes),
-            "total_files_transferred": "\(totalFilesTransferred)"
+            "total_files_transferred": "\(newTotal)"
         ])
     }
 
-    static func trackFileDownloaded(protocol: ConnectionProtocol, fileCount: Int, totalBytes: Int64) {
-        totalFilesTransferred += fileCount
+    nonisolated static func trackFileDownloaded(protocol: ConnectionProtocol, fileCount: Int, totalBytes: Int64) {
+        let newTotal = incrementFilesTransferred(by: fileCount)
         track(.fileDownloaded, with: [
             "protocol": `protocol`.rawValue,
             "file_count": "\(fileCount)",
             "size_category": sizeCategory(for: totalBytes),
-            "total_files_transferred": "\(totalFilesTransferred)"
+            "total_files_transferred": "\(newTotal)"
+        ])
+    }
+
+    /// Optimized batch tracking to avoid repetitive synchronous I/O and log spam for thousands of files.
+    nonisolated static func trackBatchTransferred(
+        protocol: ConnectionProtocol,
+        fileCount: Int,
+        totalBytes: Int64,
+        isUpload: Bool
+    ) {
+        guard fileCount > 0 else { return }
+        let newTotal = incrementFilesTransferred(by: fileCount)
+        track(isUpload ? .fileUploaded : .fileDownloaded, with: [
+            "protocol": `protocol`.rawValue,
+            "file_count": "\(fileCount)",
+            "size_category": sizeCategory(for: totalBytes),
+            "total_files_transferred": "\(newTotal)",
+            "batch": "true"
         ])
     }
 

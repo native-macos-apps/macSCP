@@ -36,15 +36,26 @@ final class FileBrowserViewModel {
     /// Total number of active transfers
     var activeTransferCount: Int {
         if let batch = activeBatch, batch.isInProgress {
-            return max(1, batch.totalFiles - batch.completedFiles)
+            return activeTransfers.count
         }
         return activeTransfers.values.reduce(0) { $0 + ($1.isDirectory ? max($1.itemCount, 1) : 1) }
     }
 
-    /// All transfers for display (active + recent)
+    /// Formatted badge count text: "99+" if large, otherwise numeric string
+    var activeTransferBadgeText: String {
+        let count = activeTransferCount
+        if count > 99 {
+            return "99+"
+        }
+        return "\(count)"
+    }
+
+    /// All transfers for display (active + retained failed + recent)
     var allTransfers: [TransferProgress] {
         let active = activeTransfers.values.sorted { $0.startTime > $1.startTime }
-        return active + recentTransfers
+        let recentIds = Set(recentTransfers.map { $0.id })
+        let extraFailed = (activeBatch?.failedTransfers ?? []).filter { !recentIds.contains($0.id) }
+        return active + extraFailed + recentTransfers
     }
 
     /// Overall progress of all active transfers (0.0 to 1.0)
@@ -750,195 +761,101 @@ final class FileBrowserViewModel {
         await uploadURLs(panel.urls)
     }
 
-    private struct PendingUploadFile: Sendable {
-        let localURL: URL
-        let displayName: String
-        let remotePath: String
-        let fileSize: Int64
-        let isTopLevel: Bool
+    // MARK: - Batch Upload Handling
+
+    private var isBatchInProgress = false
+    private(set) var lastFailedUploadItems: [TransferQueueItem] = []
+
+    /// Retries failed transfers from the previous batch without re-uploading succeeded files
+    func retryFailedTransfers() async {
+        guard !lastFailedUploadItems.isEmpty, !isBatchInProgress else { return }
+        let itemsToRetry = lastFailedUploadItems
+        await executeUploadBatch(items: itemsToRetry, directoriesToCreate: [], topLevelNames: [])
     }
 
-    private struct ScannedUploadData: Sendable {
-        let directoriesToCreate: [String]
-        let topLevelFolders: [(name: String, remotePath: String)]
-        let filesToUpload: [PendingUploadFile]
-    }
-
-    nonisolated private static func scanLocalURLs(_ urls: [URL], currentPath: String) -> ScannedUploadData {
-        var directoriesToCreate: [String] = []
-        var topLevelFolders: [(name: String, remotePath: String)] = []
-        var filesToUpload: [PendingUploadFile] = []
-
-        for url in urls {
-            guard url.isFileURL else { continue }
-            var isDir: ObjCBool = false
-            guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) else { continue }
-
-            if !isDir.boolValue {
-                let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int64) ?? 0
-                let remotePath = currentPath.appendingPathComponent(url.lastPathComponent)
-                filesToUpload.append(PendingUploadFile(
-                    localURL: url,
-                    displayName: url.lastPathComponent,
-                    remotePath: remotePath,
-                    fileSize: size,
-                    isTopLevel: true
-                ))
-            } else {
-                let folderName = url.lastPathComponent
-                let rootRemotePath = currentPath.appendingPathComponent(folderName)
-                topLevelFolders.append((name: folderName, remotePath: rootRemotePath))
-                directoriesToCreate.append(rootRemotePath)
-
-                let baseDirURL = url.deletingLastPathComponent()
-                if let enumerator = FileManager.default.enumerator(
-                    at: url,
-                    includingPropertiesForKeys: [.isDirectoryKey, .fileSizeKey],
-                    options: [.skipsHiddenFiles]
-                ) {
-                    for case let fileURL as URL in enumerator {
-                        var childIsDir: ObjCBool = false
-                        guard FileManager.default.fileExists(atPath: fileURL.path, isDirectory: &childIsDir) else { continue }
-
-                        let relativePath: String
-                        if fileURL.path.hasPrefix(baseDirURL.path) {
-                            relativePath = String(fileURL.path.dropFirst(baseDirURL.path.count))
-                                .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-                        } else {
-                            relativePath = fileURL.lastPathComponent
-                        }
-                        let childRemotePath = currentPath.appendingPathComponent(relativePath)
-
-                        if childIsDir.boolValue {
-                            directoriesToCreate.append(childRemotePath)
-                        } else {
-                            let size = (try? FileManager.default.attributesOfItem(atPath: fileURL.path)[.size] as? Int64) ?? 0
-                            filesToUpload.append(PendingUploadFile(
-                                localURL: fileURL,
-                                displayName: relativePath,
-                                remotePath: childRemotePath,
-                                fileSize: size,
-                                isTopLevel: false
-                            ))
-                        }
-                    }
-                }
-            }
-        }
-
-        return ScannedUploadData(
-            directoriesToCreate: directoriesToCreate,
-            topLevelFolders: topLevelFolders,
-            filesToUpload: filesToUpload
-        )
-    }
-
-    nonisolated private static func createRemoteDirectories(
-        _ directoriesToCreate: [String],
-        repository: FileRepositoryProtocol
-    ) async {
-        guard !directoriesToCreate.isEmpty else { return }
-        let uniqueDirs = Array(NSOrderedSet(array: directoriesToCreate)) as? [String] ?? directoriesToCreate
-        let sortedDirs = uniqueDirs.sorted { $0.components(separatedBy: "/").count < $1.components(separatedBy: "/").count }
-        let dirsByDepth = Dictionary(grouping: sortedDirs) { $0.components(separatedBy: "/").count }
-        let depths = dirsByDepth.keys.sorted()
-        for depth in depths {
-            if let dirsAtDepth = dirsByDepth[depth] {
-                await withTaskGroup(of: Void.self) { dirGroup in
-                    for dir in dirsAtDepth {
-                        dirGroup.addTask {
-                            try? await repository.createDirectory(at: dir)
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    nonisolated private static func executeBatchUploadCoordinator(
-        files: [PendingUploadFile],
-        directoriesToCreate: [String],
-        maxConcurrent: Int,
-        repository: FileRepositoryProtocol,
-        connectionType: ConnectionType,
-        tracker: BatchProgressTracker,
-        onUpdate: @escaping @Sendable (BatchProgressSnapshot) -> Void
-    ) async {
-        await createRemoteDirectories(directoriesToCreate, repository: repository)
-
-        await processBatchUpload(
-            files: files,
-            maxConcurrent: maxConcurrent,
-            repository: repository,
-            connectionType: connectionType,
-            tracker: tracker,
-            onUpdate: onUpdate
-        )
-
-        let finalSnapshot = tracker.drainFinal(isCancelled: tracker.isBatchCancelled)
-        onUpdate(finalSnapshot)
-    }
-
-    /// Core upload method that handles multiple files and directories with per-file progress tracking
+    /// Core upload method that handles multiple files and directories with streaming discovery and bounded memory
     private func uploadURLs(_ urls: [URL]) async {
-        let currentPath = self.currentPath
-        let scanned = await Task.detached(priority: .userInitiated) {
-            Self.scanLocalURLs(urls, currentPath: currentPath)
-        }.value
-
-        let filesToUpload = scanned.filesToUpload
-        let topLevelFolders = scanned.topLevelFolders
-        let directoriesToCreate = scanned.directoriesToCreate
+        guard !isBatchInProgress else {
+            logInfo("Upload batch already in progress, skipping concurrent request", category: .app)
+            return
+        }
+        isBatchInProgress = true
+        defer { isBatchInProgress = false }
 
         self.isBatchCancelled = false
-        let totalFilesCount = filesToUpload.count
-        let totalBytesSum = filesToUpload.reduce(0) { $0 + $1.fileSize }
-        let batchId = UUID()
         self.lastAppliedSnapshotSequence = 0
 
-        if topLevelFolders.count > 0 || filesToUpload.count > 1 {
-            let title = topLevelFolders.count == 1
-                ? "Uploading \"\(topLevelFolders[0].name)\""
-                : "Uploading \(totalFilesCount) files"
-            self.activeBatch = BatchTransferProgress(
-                id: batchId,
-                title: title,
-                totalFiles: totalFilesCount,
-                totalBytes: totalBytesSum
-            )
-        }
+        let currentPath = self.currentPath
+        var directoriesToCreate: [String] = []
+        var filesToUpload: [TransferQueueItem] = []
+        var topLevelDirectoryNames: [String] = []
 
         if !isShowingTransfersPopover {
             isShowingTransfersPopover = true
         }
 
-        // Immediately append top-level folders to current directory view
-        for folder in topLevelFolders {
-            let formattedPath = folder.remotePath.hasSuffix("/") ? folder.remotePath : folder.remotePath + "/"
-            let folderFile = RemoteFile(
-                name: folder.name,
-                path: formattedPath,
-                isDirectory: true,
-                size: 0,
-                permissions: "drwxr-xr-x",
-                modificationDate: Date()
-            )
-            appendFile(folderFile)
+        // Stream local filesystem enumeration with bounded memory
+        let stream = StreamingFileScanner.streamLocalURLs(urls, targetRemotePath: currentPath, bufferSize: 100)
+        for await event in stream {
+            if Task.isCancelled || isBatchCancelled { break }
+            switch event {
+            case .topLevelFolder(let folder):
+                topLevelDirectoryNames.append(folder.name)
+                appendFile(folder)
+            case .directory(let remotePath):
+                directoriesToCreate.append(remotePath)
+            case .file(let item):
+                filesToUpload.append(item)
+            case .finished:
+                break
+            }
         }
 
         guard !filesToUpload.isEmpty else {
             if !directoriesToCreate.isEmpty {
                 let repository = self.fileRepository
-                Task.detached {
-                    await Self.createRemoteDirectories(directoriesToCreate, repository: repository)
-                }
+                let dirMgr = RemoteDirectoryManager(repository: repository, maxConcurrency: 3)
+                _ = await dirMgr.createDirectories(directoriesToCreate)
             }
             return
         }
 
+        await executeUploadBatch(
+            items: filesToUpload,
+            directoriesToCreate: directoriesToCreate,
+            topLevelNames: topLevelDirectoryNames
+        )
+    }
+
+    private func executeUploadBatch(
+        items: [TransferQueueItem],
+        directoriesToCreate: [String],
+        topLevelNames: [String] = []
+    ) async {
+        let totalFilesCount = items.count
+        let totalBytesSum = items.reduce(0) { $0 + $1.fileSize }
+        let batchId = UUID()
+
+        let title: String
+        if !topLevelNames.isEmpty {
+            title = topLevelNames.count == 1
+                ? "Uploading \"\(topLevelNames[0])\""
+                : "Uploading \(totalFilesCount) files"
+        } else {
+            title = "Uploading \(totalFilesCount) files"
+        }
+
+        self.activeBatch = BatchTransferProgress(
+            id: batchId,
+            title: title,
+            totalFiles: totalFilesCount,
+            totalBytes: totalBytesSum,
+            status: .inProgress
+        )
+
         let tracker = BatchProgressTracker(
             batchId: batchId,
-            totalFiles: filesToUpload.count,
+            totalFiles: totalFilesCount,
             totalBytes: totalBytesSum,
             initialRecent: recentTransfers
         )
@@ -954,17 +871,54 @@ final class FileBrowserViewModel {
             }
         }
 
-        await Self.executeBatchUploadCoordinator(
-            files: filesToUpload,
+        let result = await BatchTransferCoordinator.shared.executeBatch(
+            items: items,
             directoriesToCreate: directoriesToCreate,
-            maxConcurrent: maxConcurrent,
             repository: repository,
-            connectionType: connectionType,
+            maxConcurrent: maxConcurrent,
+            retryPolicy: .default,
             tracker: tracker,
-            onUpdate: onUpdate
+            executor: { item, progress in
+                guard let localURL = item.localURL else {
+                    throw AppError.fileNotFound
+                }
+                try await repository.upload(localURL: localURL, to: item.remotePath, progress: progress)
+
+                var destRemoteFile: RemoteFile? = nil
+                if item.isTopLevel {
+                    destRemoteFile = RemoteFile(
+                        name: item.displayName,
+                        path: item.remotePath,
+                        isDirectory: false,
+                        size: item.fileSize,
+                        permissions: "-rw-r--r--",
+                        modificationDate: Date()
+                    )
+                }
+                return destRemoteFile
+            },
+            onUpdate: onUpdate,
+            onError: { [weak self] appError in
+                Task { @MainActor [weak self] in
+                    self?.error = appError
+                }
+            }
         )
 
+        self.lastFailedUploadItems = result.failedItems
         self.currentBatchTracker = nil
+
+        // Atomically record aggregated batch analytics
+        AnalyticsService.trackBatchTransferred(
+            protocol: .init(from: connectionType),
+            fileCount: result.completedFiles,
+            totalBytes: result.completedBytes,
+            isUpload: true
+        )
+
+        if result.completedFiles > 0 {
+            await loadFiles()
+        }
     }
 
     /// Applies an atomic throttled snapshot from BatchProgressTracker to the UI state
@@ -981,15 +935,28 @@ final class FileBrowserViewModel {
 
         self.activeTransfers = snapshot.activeTransfers
         self.recentTransfers = snapshot.recentTransfers
+
         if var batch = self.activeBatch {
             batch.completedFiles = snapshot.completedFiles
+            batch.failedFiles = snapshot.failedFiles
+            batch.cancelledFiles = snapshot.cancelledFiles
+            batch.queuedFiles = snapshot.queuedFiles
             batch.completedBytes = snapshot.completedBytes
             batch.transferredBytes = snapshot.transferredBytes
+            batch.failedTransfers = snapshot.failedTransfers
+            batch.directoryErrors = snapshot.directoryErrors
             if snapshot.isFinal {
-                batch.status = self.isBatchCancelled ? .cancelled : .completed
+                if self.isBatchCancelled || (snapshot.cancelledFiles > 0 && snapshot.completedFiles == 0 && snapshot.failedFiles == 0) {
+                    batch.status = .cancelled
+                } else if snapshot.failedFiles > 0 || !snapshot.failedTransfers.isEmpty || !snapshot.directoryErrors.isEmpty {
+                    batch.status = .failed
+                } else {
+                    batch.status = .completed
+                }
             }
             self.activeBatch = batch
         }
+
         if !snapshot.topLevelFiles.isEmpty {
             var updatedFiles = self.files
             for file in snapshot.topLevelFiles {
@@ -1007,126 +974,6 @@ final class FileBrowserViewModel {
                 state = .success(())
             } else if case .idle = state {
                 state = .success(())
-            }
-        }
-    }
-
-    nonisolated private static func processBatchUpload(
-        files: [PendingUploadFile],
-        maxConcurrent: Int,
-        repository: FileRepositoryProtocol,
-        connectionType: ConnectionType,
-        tracker: BatchProgressTracker,
-        onUpdate: @escaping @Sendable (BatchProgressSnapshot) -> Void
-    ) async {
-        await withTaskGroup(of: Void.self) { group in
-            var fileIndex = 0
-            let initialCount = min(maxConcurrent, files.count)
-            while fileIndex < initialCount {
-                let file = files[fileIndex]
-                fileIndex += 1
-                group.addTask {
-                    await Self.uploadSingleFile(
-                        file,
-                        repository: repository,
-                        connectionType: connectionType,
-                        tracker: tracker,
-                        onUpdate: onUpdate
-                    )
-                }
-            }
-
-            for await _ in group {
-                if Task.isCancelled || tracker.isBatchCancelled {
-                    break
-                }
-                if fileIndex < files.count {
-                    let file = files[fileIndex]
-                    fileIndex += 1
-                    group.addTask {
-                        await Self.uploadSingleFile(
-                            file,
-                            repository: repository,
-                            connectionType: connectionType,
-                            tracker: tracker,
-                            onUpdate: onUpdate
-                        )
-                    }
-                }
-            }
-        }
-    }
-
-    nonisolated private static func uploadSingleFile(
-        _ file: PendingUploadFile,
-        repository: FileRepositoryProtocol,
-        connectionType: ConnectionType,
-        tracker: BatchProgressTracker,
-        onUpdate: @escaping @Sendable (BatchProgressSnapshot) -> Void
-    ) async {
-        if Task.isCancelled { return }
-
-        let transferId = UUID()
-        let transfer = TransferProgress(
-            id: transferId,
-            fileName: file.displayName,
-            localURL: file.localURL,
-            remotePath: file.remotePath,
-            bytesTransferred: 0,
-            totalBytes: file.fileSize,
-            transferType: .upload,
-            status: .inProgress,
-            isDirectory: false,
-            itemCount: 1
-        )
-
-        // Atomically register in tracker buffer
-        if let snapshot = tracker.registerActive(transfer: transfer) {
-            onUpdate(snapshot)
-        }
-
-        do {
-            try Task.checkCancellation()
-
-            try await repository.upload(localURL: file.localURL, to: file.remotePath) { bytesTransferred in
-                if let snapshot = tracker.updateActiveBytes(id: transferId, bytes: bytesTransferred) {
-                    onUpdate(snapshot)
-                }
-            }
-
-            try Task.checkCancellation()
-
-            var destRemoteFile: RemoteFile? = nil
-            if file.isTopLevel {
-                destRemoteFile = RemoteFile(
-                    name: file.displayName,
-                    path: file.remotePath,
-                    isDirectory: false,
-                    size: file.fileSize,
-                    permissions: "-rw-r--r--",
-                    modificationDate: Date()
-                )
-            }
-
-            if let snapshot = tracker.completeFile(id: transferId, totalBytes: file.fileSize, topLevelFile: destRemoteFile) {
-                onUpdate(snapshot)
-            }
-
-            AnalyticsService.trackFileUploaded(protocol: .init(from: connectionType), fileCount: 1, totalBytes: file.fileSize)
-            logInfo("Uploaded: \(file.displayName)", category: connectionType == .s3 ? .s3 : .sftp)
-        } catch {
-            let isCancellation = error is CancellationError ||
-                Task.isCancelled ||
-                String(describing: error).contains("CancellationError")
-
-            if let snapshot = tracker.failOrCancelFile(id: transferId, totalBytes: file.fileSize, error: error, isCancelled: isCancellation) {
-                onUpdate(snapshot)
-            }
-
-            if isCancellation {
-                logInfo("Upload cancelled: \(file.displayName)", category: connectionType == .s3 ? .s3 : .sftp)
-            } else {
-                logError("Upload failed for \(file.displayName): \(error)", category: connectionType == .s3 ? .s3 : .sftp)
             }
         }
     }
