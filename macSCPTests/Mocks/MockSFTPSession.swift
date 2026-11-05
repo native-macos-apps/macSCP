@@ -55,8 +55,7 @@ actor MockSFTPSession: SFTPSessionProtocol {
         host: String,
         port: Int,
         username: String,
-        privateKeyPath: String,
-        bookmarkData: Data?,
+        privateKeyContent: String,
         passphrase: String?
     ) async throws {
         connectKeyCalled = true

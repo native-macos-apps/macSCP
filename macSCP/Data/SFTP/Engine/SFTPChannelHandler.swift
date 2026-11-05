@@ -23,9 +23,14 @@ nonisolated final class SFTPChannelHandler: ChannelDuplexHandler, @unchecked Sen
     nonisolated(unsafe) weak var delegate: SFTPChannelHandlerDelegate?
     nonisolated(unsafe) private var accumulator: ByteBuffer
     nonisolated(unsafe) private var context: ChannelHandlerContext?
+    nonisolated(unsafe) private var subsystemPromise: EventLoopPromise<Void>?
 
     nonisolated init(allocator: ByteBufferAllocator = .init()) {
         self.accumulator = allocator.buffer(capacity: 65536)
+    }
+
+    nonisolated func setSubsystemPromise(_ promise: EventLoopPromise<Void>) {
+        self.subsystemPromise = promise
     }
 
     nonisolated func handlerAdded(context: ChannelHandlerContext) {
@@ -34,14 +39,33 @@ nonisolated final class SFTPChannelHandler: ChannelDuplexHandler, @unchecked Sen
 
     nonisolated func handlerRemoved(context: ChannelHandlerContext) {
         self.context = nil
+        subsystemPromise?.fail(AppError.connectionFailed("SFTP handler removed before subsystem confirmation."))
+        subsystemPromise = nil
+    }
+
+    nonisolated func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
+        switch event {
+        case is ChannelSuccessEvent:
+            subsystemPromise?.succeed(())
+            subsystemPromise = nil
+        case is ChannelFailureEvent:
+            subsystemPromise?.fail(AppError.connectionFailed("SFTP subsystem was rejected by the server. Please verify that 'Subsystem sftp' is enabled in /etc/ssh/sshd_config."))
+            subsystemPromise = nil
+        default:
+            context.fireUserInboundEventTriggered(event)
+        }
     }
 
     nonisolated func channelInactive(context: ChannelHandlerContext) {
+        subsystemPromise?.fail(AppError.connectionFailed("SFTP channel closed unexpectedly by remote host."))
+        subsystemPromise = nil
         delegate?.sftpChannelHandler(self, didCloseWithError: nil)
         context.fireChannelInactive()
     }
 
     nonisolated func errorCaught(context: ChannelHandlerContext, error: Error) {
+        subsystemPromise?.fail(error)
+        subsystemPromise = nil
         delegate?.sftpChannelHandler(self, didCloseWithError: error)
         context.fireErrorCaught(error)
     }

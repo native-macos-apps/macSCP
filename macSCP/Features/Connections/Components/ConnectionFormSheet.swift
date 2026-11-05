@@ -41,8 +41,9 @@ struct ConnectionFormSheet: View {
     @State private var port: String = "22"
     @State private var username: String = ""
     @State private var authMethod: AuthMethod = .password
-    @State private var privateKeyPath: String = ""
-    @State private var securityScopedBookmarkData: Data? = nil
+    @State private var selectedSSHKeyId: UUID? = nil
+    @State private var availableKeys: [SSHKeyItem] = []
+    @State private var showingImportKeySheet: Bool = false
     @State private var savePassword: Bool = false
     @State private var password: String = ""
     @State private var description: String = ""
@@ -138,11 +139,30 @@ struct ConnectionFormSheet: View {
                             Toggle("Save password in Keychain", isOn: $savePassword)
                         } else {
                             HStack {
-                                TextField("Private Key Path", text: $privateKeyPath)
-                                Button("Browse") {
-                                    browseForKey()
+                                Picker("SSH Key", selection: $selectedSSHKeyId) {
+                                    Text("Select a key...").tag(nil as UUID?)
+                                    ForEach(availableKeys) { key in
+                                        Text(key.displayName).tag(key.id as UUID?)
+                                    }
+                                }
+
+                                Button {
+                                    showingImportKeySheet = true
+                                } label: {
+                                    Label("Import Key...", systemImage: "plus")
                                 }
                             }
+
+                            if let selectedId = selectedSSHKeyId, let key = availableKeys.first(where: { $0.id == selectedId }) {
+                                Text("Fingerprint: \(key.shortFingerprint)")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            } else if availableKeys.isEmpty {
+                                Text("No SSH keys stored in app yet. Click 'Import Key...' to add one.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+
                             SecureField("Passphrase (optional)", text: $password)
                             Toggle("Save passphrase in Keychain", isOn: $savePassword)
                         }
@@ -224,9 +244,21 @@ struct ConnectionFormSheet: View {
             }
             .padding()
         }
-        .frame(width: 500, height: 580)
+        .frame(width: 500, height: 600)
         .onAppear {
             loadExistingData()
+        }
+        .sheet(isPresented: $showingImportKeySheet) {
+            ImportKeySheet(
+                onKeyImported: { importedKey in
+                    availableKeys = SSHKeyStorageService.shared.getAllKeys()
+                    selectedSSHKeyId = importedKey.id
+                    showingImportKeySheet = false
+                },
+                onCancel: {
+                    showingImportKeySheet = false
+                }
+            )
         }
     }
 
@@ -235,11 +267,12 @@ struct ConnectionFormSheet: View {
     private var isValid: Bool {
         switch selectedType {
         case .sftp:
+            let isAuthValid = (authMethod == .password) || (selectedSSHKeyId != nil)
             return !name.trimmed.isEmpty &&
                 !host.trimmed.isEmpty &&
                 !username.trimmed.isEmpty &&
                 (Int(port) ?? 0) > 0 && (Int(port) ?? 0) <= 65535 &&
-                (authMethod == .password || !privateKeyPath.trimmed.isEmpty)
+                isAuthValid
         case .s3:
             return !name.trimmed.isEmpty &&
                 !username.trimmed.isEmpty
@@ -251,14 +284,18 @@ struct ConnectionFormSheet: View {
     // MARK: - Data Loading
 
     private func loadExistingData() {
+        availableKeys = SSHKeyStorageService.shared.getAllKeys()
+
         if case .edit(let connection) = mode {
             name = connection.name
             host = connection.host
             port = String(connection.port)
             username = connection.username
             authMethod = connection.authMethod
-            privateKeyPath = connection.privateKeyPath ?? ""
-            securityScopedBookmarkData = connection.securityScopedBookmarkData
+            selectedSSHKeyId = connection.sshKeyId
+            if selectedSSHKeyId == nil, !availableKeys.isEmpty {
+                selectedSSHKeyId = availableKeys.first?.id
+            }
             savePassword = connection.savePassword
             description = connection.description ?? ""
             iconName = connection.iconName
@@ -275,6 +312,10 @@ struct ConnectionFormSheet: View {
                 } else {
                     password = saved
                 }
+            }
+        } else {
+            if !availableKeys.isEmpty {
+                selectedSSHKeyId = availableKeys.first?.id
             }
         }
     }
@@ -293,8 +334,7 @@ struct ConnectionFormSheet: View {
                 port: portNumber,
                 username: username.trimmed,
                 authMethod: authMethod,
-                privateKeyPath: authMethod == .privateKey ? privateKeyPath.trimmed : nil,
-                securityScopedBookmarkData: authMethod == .privateKey ? securityScopedBookmarkData : nil,
+                sshKeyId: authMethod == .privateKey ? selectedSSHKeyId : nil,
                 savePassword: savePassword,
                 description: description.trimmed.isEmpty ? nil : description.trimmed,
                 tags: tags,
@@ -314,8 +354,7 @@ struct ConnectionFormSheet: View {
                 port: portNumber,
                 username: username.trimmed,
                 authMethod: authMethod,
-                privateKeyPath: authMethod == .privateKey ? privateKeyPath.trimmed : nil,
-                securityScopedBookmarkData: authMethod == .privateKey ? securityScopedBookmarkData : nil,
+                sshKeyId: authMethod == .privateKey ? selectedSSHKeyId : nil,
                 savePassword: savePassword,
                 description: description.trimmed.isEmpty ? nil : description.trimmed,
                 tags: tags,
@@ -338,23 +377,6 @@ struct ConnectionFormSheet: View {
     }
 
     // MARK: - Helpers
-
-    private func browseForKey() {
-        let panel = NSOpenPanel()
-        panel.allowsMultipleSelection = false
-        panel.canChooseDirectories = false
-        panel.canChooseFiles = true
-        panel.directoryURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".ssh")
-
-        if panel.runModal() == .OK, let url = panel.url {
-            privateKeyPath = url.path
-            do {
-                securityScopedBookmarkData = try url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil)
-            } catch {
-                print("Failed to create security-scoped bookmark: \(error)")
-            }
-        }
-    }
 
     private func addTag() {
         let tag = newTag.trimmed

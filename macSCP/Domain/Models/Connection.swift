@@ -23,8 +23,7 @@ struct Connection: Identifiable, Hashable, Sendable, Codable, Transferable {
     var port: Int
     var username: String
     var authMethod: AuthMethod
-    var privateKeyPath: String?
-    var securityScopedBookmarkData: Data?
+    var sshKeyId: UUID?
     var savePassword: Bool
     var description: String?
     var tags: [String]
@@ -46,8 +45,7 @@ struct Connection: Identifiable, Hashable, Sendable, Codable, Transferable {
         port: Int = 22,
         username: String,
         authMethod: AuthMethod = .password,
-        privateKeyPath: String? = nil,
-        securityScopedBookmarkData: Data? = nil,
+        sshKeyId: UUID? = nil,
         savePassword: Bool = false,
         description: String? = nil,
         tags: [String] = [],
@@ -66,8 +64,7 @@ struct Connection: Identifiable, Hashable, Sendable, Codable, Transferable {
         self.port = port
         self.username = username
         self.authMethod = authMethod
-        self.privateKeyPath = privateKeyPath
-        self.securityScopedBookmarkData = securityScopedBookmarkData
+        self.sshKeyId = sshKeyId
         self.savePassword = savePassword
         self.description = description
         self.tags = tags
@@ -150,7 +147,7 @@ extension Connection {
         !host.isBlank &&
         !username.isBlank &&
         port > 0 && port <= 65535 &&
-        (authMethod == .password || privateKeyPath != nil)
+        (authMethod == .password || sshKeyId != nil)
     }
 
     private var isS3Valid: Bool {
@@ -183,8 +180,8 @@ extension Connection {
         if port <= 0 || port > 65535 {
             errors.append("Port must be between 1 and 65535")
         }
-        if authMethod == .privateKey && (privateKeyPath?.isBlank ?? true) {
-            errors.append("Private key path is required for key authentication")
+        if authMethod == .privateKey && sshKeyId == nil {
+            errors.append("An SSH key must be selected for key authentication")
         }
         return errors
     }

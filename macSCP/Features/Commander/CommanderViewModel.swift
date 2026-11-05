@@ -634,7 +634,7 @@ final class CommanderViewModel {
                 host: connection.host,
                 port: connection.port,
                 username: connection.username,
-                privateKeyPath: connection.privateKeyPath,
+                sshKeyId: connection.sshKeyId,
                 initialPath: initialPath
             )
         }

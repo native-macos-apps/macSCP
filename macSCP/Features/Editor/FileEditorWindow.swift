@@ -102,12 +102,17 @@ struct FileEditorWindow: View {
                         password: data.password
                     )
                 case .privateKey:
+                    guard let keyId = data.sshKeyId else {
+                        throw AppError.connectionFailed("No SSH key selected for this connection. Please edit the connection and select an SSH key.")
+                    }
+                    guard let privateKeyContent = try SSHKeyStorageService.shared.getPrivateKeyContent(for: keyId), !privateKeyContent.isEmpty else {
+                        throw AppError.connectionFailed("SSH key was not found in Keychain. Please edit the connection and re-select or import an SSH key.")
+                    }
                     try await session.connect(
                         host: data.host,
                         port: data.port,
                         username: data.username,
-                        privateKeyPath: data.privateKeyPath ?? "",
-                        bookmarkData: data.securityScopedBookmarkData,
+                        privateKeyContent: privateKeyContent,
                         passphrase: data.password.isEmpty ? nil : data.password
                     )
                 }

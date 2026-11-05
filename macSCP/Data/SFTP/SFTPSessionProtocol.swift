@@ -22,16 +22,12 @@ nonisolated protocol SFTPSessionProtocol: Sendable {
         password: String
     ) async throws
 
-    /// Connect to the server with private key authentication
-    /// - Note: Passphrase support depends on the underlying implementation.
-    ///         Currently, passphrase-protected keys may not be supported.
-    ///         Use unencrypted keys or convert encrypted keys to unencrypted format.
+    /// Connect to the server with private key content string (e.g. from Keychain)
     func connect(
         host: String,
         port: Int,
         username: String,
-        privateKeyPath: String,
-        bookmarkData: Data?,
+        privateKeyContent: String,
         passphrase: String?
     ) async throws
 

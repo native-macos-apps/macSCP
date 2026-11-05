@@ -353,8 +353,7 @@ final class ConnectionListViewModel {
             username: connection.username,
             password: password,
             authMethod: connection.authMethod,
-            privateKeyPath: connection.privateKeyPath,
-            securityScopedBookmarkData: connection.securityScopedBookmarkData,
+            sshKeyId: connection.sshKeyId,
             connectionType: connection.connectionType,
             s3Region: connection.s3Region,
             s3Bucket: connection.s3Bucket,
@@ -386,7 +385,7 @@ final class ConnectionListViewModel {
             host: connection.host,
             port: connection.port,
             username: connection.username,
-            privateKeyPath: connection.privateKeyPath
+            sshKeyId: connection.sshKeyId
         )
         
         if case .failure(let error) = result {
@@ -447,8 +446,7 @@ final class ConnectionListViewModel {
             port: connection.port,
             username: connection.username,
             authMethod: connection.authMethod,
-            privateKeyPath: connection.privateKeyPath,
-            securityScopedBookmarkData: connection.securityScopedBookmarkData,
+            sshKeyId: connection.sshKeyId,
             savePassword: connection.savePassword,
             description: connection.description,
             tags: connection.tags,

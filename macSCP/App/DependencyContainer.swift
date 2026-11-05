@@ -27,6 +27,11 @@ final class DependencyContainer: ObservableObject {
         KeychainService.shared
     }()
 
+    // MARK: - SSH Key Repository
+    lazy var sshKeyRepository: SSHKeyRepositoryProtocol = {
+        SSHKeyStorageService.shared
+    }()
+
     // MARK: - Repositories
     lazy var connectionRepository: ConnectionRepositoryProtocol = {
         ConnectionRepository(dataStore: dataStore)

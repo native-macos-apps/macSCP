@@ -57,51 +57,18 @@ actor SFTPSession: SFTPSessionProtocol {
         host: String,
         port: Int,
         username: String,
-        privateKeyPath: String,
-        bookmarkData: Data?,
+        privateKeyContent: String,
         passphrase: String?
     ) async throws {
-        logInfo("Connecting to \(username)@\(host):\(port) with private key", category: .sftp)
+        logInfo("Connecting to \(username)@\(host):\(port) with in-app private key", category: .sftp)
 
         let normalizedHost = (host.lowercased() == "localhost") ? "127.0.0.1" : host
         let conn = SSHConnection()
         self.connection = conn
 
         do {
-            // Read private key file with security-scoped bookmark support
-            var privateKeyURL: URL
-            var isStale = false
-            var accessedSecurityScope = false
-
-            if let bookmarkData = bookmarkData {
-                privateKeyURL = try URL(
-                    resolvingBookmarkData: bookmarkData,
-                    options: .withSecurityScope,
-                    relativeTo: nil,
-                    bookmarkDataIsStale: &isStale
-                )
-                if isStale {
-                    logWarning("Private key bookmark is stale for \(privateKeyURL.path)", category: .sftp)
-                }
-                accessedSecurityScope = privateKeyURL.startAccessingSecurityScopedResource()
-                if !accessedSecurityScope {
-                    throw AppError.connectionFailed("Couldn't access the saved private key. Re-select the key file in connection settings.")
-                }
-            } else {
-                privateKeyURL = URL(fileURLWithPath: privateKeyPath)
-            }
-
-            defer {
-                if accessedSecurityScope {
-                    privateKeyURL.stopAccessingSecurityScopedResource()
-                }
-            }
-
-            let privateKeyData = try Data(contentsOf: privateKeyURL)
-            let privateKeyString = String(data: privateKeyData, encoding: .utf8) ?? ""
-
-            let privateKey = try SSHKeyParser.parsePrivateKey(from: privateKeyString, passphrase: passphrase)
-            let userAuth = SSHKeyUserAuthDelegate(username: username, privateKey: privateKey)
+            let nioPrivateKey = try SSHKeyParser.parsePrivateKey(from: privateKeyContent, passphrase: passphrase)
+            let userAuth = SSHKeyUserAuthDelegate(username: username, privateKey: nioPrivateKey)
 
             let sftpClient = try await conn.connect(
                 host: normalizedHost,
@@ -112,7 +79,7 @@ actor SFTPSession: SFTPSessionProtocol {
             self.client = sftpClient
             self.isConnected = true
             self.currentPath = try await getRealPath(at: ".")
-            logInfo("Connected successfully to \(host) using private key", category: .sftp)
+            logInfo("Connected successfully to \(host) using in-app private key", category: .sftp)
         } catch {
             await conn.disconnect()
             self.connection = nil
@@ -528,6 +495,19 @@ actor SFTPSession: SFTPSessionProtocol {
                 }
             default:
                 return .sftpOperationFailed(sftpError.localizedDescription)
+            }
+        }
+
+        if let channelError = error as? ChannelError {
+            switch channelError {
+            case .eof, .ioOnClosedChannel:
+                return .connectionFailed("Connection closed by remote host. Please verify your SSH credentials and that SFTP is enabled on the server.")
+            case .connectTimeout:
+                return .connectionTimeout
+            case .writeHostUnreachable:
+                return .hostUnreachable
+            default:
+                return .connectionFailed(channelError.description)
             }
         }
 

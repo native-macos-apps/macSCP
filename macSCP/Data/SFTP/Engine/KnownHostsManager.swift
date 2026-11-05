@@ -59,13 +59,27 @@ final class KnownHostsManager: @unchecked Sendable {
     }
 
     func removeHost(host: String, port: Int) {
+        removeHost(identifier: "\(host.lowercased()):\(port)")
+    }
+
+    func removeHost(identifier: String) {
         lock.lock()
         defer { lock.unlock() }
 
-        let identifier = "\(host.lowercased()):\(port)"
         let defaults = UserDefaults.standard
         var knownHosts = defaults.dictionary(forKey: storageKey) as? [String: String] ?? [:]
         knownHosts.removeValue(forKey: identifier)
         defaults.set(knownHosts, forKey: storageKey)
+    }
+
+    /// All trusted hosts as (identifier "host:port", fingerprint), sorted by identifier.
+    func allHosts() -> [(identifier: String, fingerprint: String)] {
+        lock.lock()
+        defer { lock.unlock() }
+
+        let knownHosts = UserDefaults.standard.dictionary(forKey: storageKey) as? [String: String] ?? [:]
+        return knownHosts
+            .map { (identifier: $0.key, fingerprint: $0.value) }
+            .sorted { $0.identifier < $1.identifier }
     }
 }

@@ -298,13 +298,18 @@ final class FileBrowserViewModel {
                         username: connection.username,
                         password: password
                     )
-                } else if let keyPath = connection.privateKeyPath {
+                } else if connection.authMethod == .privateKey {
+                    guard let sshKeyId = connection.sshKeyId else {
+                        throw AppError.connectionFailed("No SSH key selected for this connection. Please edit the connection and select an SSH key.")
+                    }
+                    guard let keyContent = try SSHKeyStorageService.shared.getPrivateKeyContent(for: sshKeyId), !keyContent.isEmpty else {
+                        throw AppError.connectionFailed("SSH key was not found in Keychain. Please edit the connection and re-select or import an SSH key.")
+                    }
                     try await sftpSession.connect(
                         host: connection.host,
                         port: connection.port,
                         username: connection.username,
-                        privateKeyPath: keyPath,
-                        bookmarkData: connection.securityScopedBookmarkData,
+                        privateKeyContent: keyContent,
                         passphrase: password.isEmpty ? nil : password
                     )
                 }
@@ -1212,8 +1217,7 @@ final class FileBrowserViewModel {
             username: connection.username,
             password: password,
             authMethod: connection.authMethod,
-            privateKeyPath: connection.privateKeyPath,
-            securityScopedBookmarkData: connection.securityScopedBookmarkData,
+            sshKeyId: connection.sshKeyId,
             connectionType: connection.connectionType,
             s3Region: connection.s3Region,
             s3Bucket: connection.s3Bucket,

@@ -13,6 +13,7 @@ enum AppConstants {
     nonisolated static let bundleIdentifier = "com.macSCP"
     nonisolated static let keychainService = "com.macSCP.ssh"
     nonisolated static let keychainS3Service = "com.macSCP.s3"
+    nonisolated static let keychainSSHKeyService = "com.macSCP.sshKeys"
     nonisolated static let defaultSSHPort = 22
     nonisolated static let maxRecentConnections = 10
 }

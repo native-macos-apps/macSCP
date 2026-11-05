@@ -76,8 +76,7 @@ final class SecurityAndTransferTests: XCTestCase {
             port: 22,
             username: "user",
             password: "secretpassword",
-            authMethod: .password,
-            privateKeyPath: nil
+            authMethod: .password
         )
 
         let id = windowManager.storeFileBrowserData(browserData)

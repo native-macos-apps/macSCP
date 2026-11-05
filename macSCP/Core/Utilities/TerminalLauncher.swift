@@ -35,16 +35,22 @@ enum TerminalLauncher {
         host: String,
         port: Int,
         username: String,
-        privateKeyPath: String? = nil,
+        sshKeyId: UUID? = nil,
         initialPath: String? = nil
     ) async -> Result<Void, Error> {
         logInfo("Launching native terminal (AppleScript) for \(username)@\(host):\(port)", category: .ui)
         
         var sshCommand = "ssh -p \(port)"
         
-        if let keyPath = privateKeyPath, !keyPath.isEmpty {
-            let escapedKeyPath = keyPath.replacingOccurrences(of: " ", with: "\\ ")
-            sshCommand += " -i \(escapedKeyPath)"
+        if let keyId = sshKeyId,
+           let keyContent = try? SSHKeyStorageService.shared.getPrivateKeyContent(for: keyId),
+           !keyContent.isEmpty {
+            let tempKeyURL = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("macscp_ssh_\(keyId.uuidString).pem")
+            if (try? keyContent.write(to: tempKeyURL, atomically: true, encoding: .utf8)) != nil {
+                try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: tempKeyURL.path)
+                let escapedKeyPath = tempKeyURL.path.replacingOccurrences(of: " ", with: "\\ ")
+                sshCommand += " -i \(escapedKeyPath)"
+            }
         }
         
         sshCommand += " \(username)@\(host)"

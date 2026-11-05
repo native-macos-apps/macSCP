@@ -18,8 +18,7 @@ struct FileBrowserWindowData: Sendable {
     let username: String
     let password: String
     let authMethod: AuthMethod
-    let privateKeyPath: String?
-    let securityScopedBookmarkData: Data?
+    let sshKeyId: UUID?
     let connectionType: ConnectionType
     let s3Region: String?
     let s3Bucket: String?
@@ -34,8 +33,7 @@ struct FileBrowserWindowData: Sendable {
         username: String,
         password: String,
         authMethod: AuthMethod,
-        privateKeyPath: String?,
-        securityScopedBookmarkData: Data? = nil,
+        sshKeyId: UUID? = nil,
         connectionType: ConnectionType = .sftp,
         s3Region: String? = nil,
         s3Bucket: String? = nil,
@@ -49,8 +47,7 @@ struct FileBrowserWindowData: Sendable {
         self.username = username
         self.password = password
         self.authMethod = authMethod
-        self.privateKeyPath = privateKeyPath
-        self.securityScopedBookmarkData = securityScopedBookmarkData
+        self.sshKeyId = sshKeyId
         self.connectionType = connectionType
         self.s3Region = s3Region
         self.s3Bucket = s3Bucket
@@ -70,8 +67,7 @@ struct FileEditorWindowData: Sendable {
     let username: String
     let password: String
     let authMethod: AuthMethod
-    let privateKeyPath: String?
-    let securityScopedBookmarkData: Data?
+    let sshKeyId: UUID?
     // S3-specific fields
     let connectionType: ConnectionType
     let s3Region: String?
@@ -88,8 +84,7 @@ struct FileEditorWindowData: Sendable {
         username: String,
         password: String,
         authMethod: AuthMethod,
-        privateKeyPath: String?,
-        securityScopedBookmarkData: Data? = nil,
+        sshKeyId: UUID? = nil,
         connectionType: ConnectionType = .sftp,
         s3Region: String? = nil,
         s3Bucket: String? = nil,
@@ -104,8 +99,7 @@ struct FileEditorWindowData: Sendable {
         self.username = username
         self.password = password
         self.authMethod = authMethod
-        self.privateKeyPath = privateKeyPath
-        self.securityScopedBookmarkData = securityScopedBookmarkData
+        self.sshKeyId = sshKeyId
         self.connectionType = connectionType
         self.s3Region = s3Region
         self.s3Bucket = s3Bucket

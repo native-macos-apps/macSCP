@@ -144,9 +144,13 @@ struct ConnectionDetailView: View {
                 contactDetailRow(label: "username", value: connection.username, icon: "person")
                 Divider().padding(.leading, 36)
                 contactDetailRow(label: "auth", value: connection.authMethod.displayName, icon: "key")
-                if connection.authMethod == .privateKey, let keyPath = connection.privateKeyPath {
+                if connection.authMethod == .privateKey {
                     Divider().padding(.leading, 36)
-                    contactDetailRow(label: "key path", value: keyPath, icon: "doc.text")
+                    if let keyId = connection.sshKeyId, let key = SSHKeyStorageService.shared.getKey(by: keyId) {
+                        contactDetailRow(label: "ssh key", value: key.displayName, icon: "key.horizontal")
+                    } else {
+                        contactDetailRow(label: "ssh key", value: "Not selected", icon: "exclamationmark.triangle")
+                    }
                 }
             }
         }

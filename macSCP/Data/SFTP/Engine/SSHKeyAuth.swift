@@ -41,10 +41,12 @@ nonisolated final class SSHKeyUserAuthDelegate: NIOSSHClientUserAuthenticationDe
 nonisolated final class KnownHostsServerAuthDelegate: NIOSSHClientServerAuthenticationDelegate, @unchecked Sendable {
     private let host: String
     private let port: Int
+    private let failureRecorder: ParentChannelErrorRecorder?
 
-    nonisolated init(host: String, port: Int) {
+    nonisolated init(host: String, port: Int, failureRecorder: ParentChannelErrorRecorder? = nil) {
         self.host = host
         self.port = port
+        self.failureRecorder = failureRecorder
     }
 
     nonisolated func validateHostKey(hostKey: NIOSSHPublicKey, validationCompletePromise: EventLoopPromise<Void>) {
@@ -58,7 +60,8 @@ nonisolated final class KnownHostsServerAuthDelegate: NIOSSHClientServerAuthenti
             validationCompletePromise.succeed(())
         case .hostKeyMismatch(let expected, let actual):
             logError("POTENTIAL MITM ATTACK! Host key mismatch for \(host):\(port). Expected: \(expected), Got: \(actual)", category: .sftp)
-            let error = AppError.connectionFailed("Host key verification failed for \(host):\(port)! The server host key has changed (Expected: \(expected), Actual: \(actual)). This could indicate a Man-In-The-Middle attack.")
+            let error = AppError.connectionFailed("The host key of \(host):\(port) has changed (saved: \(expected), server now: \(actual)). If the server was reinstalled or its SSH keys were regenerated, remove the saved host key in Settings > Known Hosts and connect again. Otherwise this could be a man-in-the-middle attack.")
+            failureRecorder?.record(error)
             validationCompletePromise.fail(error)
         }
     }
@@ -96,6 +99,31 @@ nonisolated enum SSHKeyParser {
                 return "Failed to decode base64 data in private key."
             }
         }
+    }
+
+    struct KeyMetadata: Sendable {
+        let keyType: String
+        let fingerprint: String
+        let publicKeyString: String?
+    }
+
+    /// Inspects and extracts metadata (type, fingerprint, public key) from a private key string
+    static func inspectKey(from keyString: String, passphrase: String? = nil) throws -> KeyMetadata {
+        let nioKey = try parsePrivateKey(from: keyString, passphrase: passphrase)
+        let pubKey = nioKey.publicKey
+        let pubKeyString = String(openSSHPublicKey: pubKey)
+        let keyPrefix = pubKeyString.split(separator: " ").first.map(String.init) ?? ""
+        let fingerprint = KnownHostsManager.computeFingerprint(for: pubKey)
+        let typeName: String
+        switch keyPrefix {
+        case "ssh-ed25519": typeName = "Ed25519"
+        case "ecdsa-sha2-nistp256": typeName = "ECDSA (P-256)"
+        case "ecdsa-sha2-nistp384": typeName = "ECDSA (P-384)"
+        case "ecdsa-sha2-nistp521": typeName = "ECDSA (P-521)"
+        case "ssh-rsa": typeName = "RSA"
+        default: typeName = keyPrefix.isEmpty ? "SSH Key" : keyPrefix
+        }
+        return KeyMetadata(keyType: typeName, fingerprint: fingerprint, publicKeyString: pubKeyString)
     }
 
     /// Parses an SSH private key from file string into a NIOSSHPrivateKey
