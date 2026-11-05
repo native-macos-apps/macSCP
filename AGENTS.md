@@ -34,11 +34,22 @@ This project is indexed by GitNexus as **macSCP** (3073 symbols, 16084 relations
 
 | Task | Read this skill file |
 | --- | --- |
-| Understand architecture / "How does X work?" | `.claude/skills/gitnexus-exploring/SKILL.md` |
-| Blast radius / "What breaks if I change X?" | `.claude/skills/gitnexus-impact-analysis/SKILL.md` |
-| Trace bugs / "Why is X failing?" | `.claude/skills/gitnexus-debugging/SKILL.md` |
-| Rename / extract / split / refactor | `.claude/skills/gitnexus-refactoring/SKILL.md` |
-| Tools, resources, schema reference | `.claude/skills/gitnexus-guide/SKILL.md` |
-| Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus-cli/SKILL.md` |
+| Understand architecture / "How does X work?" | `.agents/skills/gitnexus-exploring/SKILL.md` |
+| Blast radius / "What breaks if I change X?" | `.agents/skills/gitnexus-impact-analysis/SKILL.md` |
+| Trace bugs / "Why is X failing?" | `.agents/skills/gitnexus-debugging/SKILL.md` |
+| Rename / extract / split / refactor | `.agents/skills/gitnexus-refactoring/SKILL.md` |
+| Tools, resources, schema reference | `.agents/skills/gitnexus-guide/SKILL.md` |
+| Index, status, clean, wiki CLI commands | `.agents/skills/gitnexus-cli/SKILL.md` |
 
 <!-- gitnexus:end -->
+
+# Agent Rules & Guidelines
+
+## Plan Documentation
+- **Plan Storage**: All plan files MUST be saved in the `docs/plans/` directory.
+- **Naming Convention**: Plan files MUST adhere to the format `YYYYMMDDSeq-<artifact-name>.md`:
+  - `YYYYMMDD`: 8-digit date string for the current date (e.g., `20261105`).
+  - `Seq`: 2-digit sequential number of the plan created within the day, from `01` to `99` (e.g., `01`, `02`, ...).
+  - `<artifact-name>`: Brief kebab-case description of the plan/artifact.
+  - Example: `docs/plans/2026110501-batch-upload-refactor.md`
+
