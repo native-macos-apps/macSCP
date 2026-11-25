@@ -53,3 +53,9 @@ This project is indexed by GitNexus as **macSCP** (3073 symbols, 16084 relations
   - `<artifact-name>`: Brief kebab-case description of the plan/artifact.
   - Example: `docs/plans/2026110501-batch-upload-refactor.md`
 
+## Technical Debt Tracking
+- **Mandatory Logging**: Any technical debt, code smell, workaround, or deferred refactoring discovered or introduced during development MUST be recorded in `docs/technical-debt.md` with its file path, line numbers, priority (`P0`/`P1`/`P2`), problem description, and proposed resolution.
+- **No Silent Debt**: NEVER silently ignore, defer, or bury technical debt (e.g., leaving undocumented workarounds, silent error swallowing, or chat-only remarks). If an issue cannot be fixed immediately within the current task scope, it MUST be logged in `docs/technical-debt.md` before finishing the task.
+- **Keep Up to Date**: When a tracked item in `docs/technical-debt.md` is fixed, mark its checklist item as completed (or update its status) in the same change.
+
+
