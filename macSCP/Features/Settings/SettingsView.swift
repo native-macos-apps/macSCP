@@ -42,14 +42,33 @@ struct SettingsView: View {
     }
 
     @State private var selectedTab: SettingsTab = .transfers
-    @State private var appLockManager = AppLockManager.shared
-    @State private var transferSettings = TransferSettings.shared
+    @State private var appLockManager: AppLockManager
+    @State private var transferSettings: TransferSettings
     @State private var sshKeys: [SSHKeyItem] = []
     @State private var knownHosts: [KnownHostEntry] = []
     @State private var showingImportKeySheet: Bool = false
     @State private var keyToDelete: SSHKeyItem? = nil
     @State private var showingDeleteConfirmation: Bool = false
-    private let biometricService: BiometricAuthServiceProtocol = BiometricAuthService.shared
+
+    private let sshKeyRepository: SSHKeyRepositoryProtocol
+    private let knownHostsManager: KnownHostsManager
+    private let biometricService: BiometricAuthServiceProtocol
+
+    @MainActor
+    init(
+        appLockManager: AppLockManager? = nil,
+        transferSettings: TransferSettings? = nil,
+        sshKeyRepository: SSHKeyRepositoryProtocol? = nil,
+        knownHostsManager: KnownHostsManager? = nil,
+        biometricService: BiometricAuthServiceProtocol? = nil
+    ) {
+        let container = DependencyContainer.shared
+        self._appLockManager = State(initialValue: appLockManager ?? container.appLockManager)
+        self._transferSettings = State(initialValue: transferSettings ?? container.transferSettings)
+        self.sshKeyRepository = sshKeyRepository ?? container.sshKeyRepository
+        self.knownHostsManager = knownHostsManager ?? container.knownHostsManager
+        self.biometricService = biometricService ?? container.biometricAuthService
+    }
 
     private var isBiometricAvailable: Bool {
         biometricService.isBiometricAvailable()
@@ -305,7 +324,7 @@ struct SettingsView: View {
                             Spacer()
 
                             Button(role: .destructive) {
-                                KnownHostsManager.shared.removeHost(identifier: host.identifier)
+                                knownHostsManager.removeHost(identifier: host.identifier)
                                 reloadKeys()
                             } label: {
                                 Image(systemName: "trash")
@@ -415,14 +434,14 @@ struct SettingsView: View {
     // MARK: - Helpers
 
     private func reloadKeys() {
-        sshKeys = SSHKeyStorageService.shared.getAllKeys()
-        knownHosts = KnownHostsManager.shared.allHosts().map {
+        sshKeys = sshKeyRepository.getAllKeys()
+        knownHosts = knownHostsManager.allHosts().map {
             KnownHostEntry(identifier: $0.identifier, fingerprint: $0.fingerprint)
         }
     }
 
     private func deleteKey(_ key: SSHKeyItem) {
-        try? SSHKeyStorageService.shared.deleteKey(id: key.id)
+        try? sshKeyRepository.deleteKey(id: key.id)
         reloadKeys()
     }
 }

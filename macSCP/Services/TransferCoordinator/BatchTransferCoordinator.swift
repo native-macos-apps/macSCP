@@ -33,6 +33,7 @@ final class BatchTransferCoordinator: Sendable {
         directoriesToCreate: [String],
         repository: FileRepositoryProtocol,
         maxConcurrent: Int,
+        transferType: TransferType = .upload,
         retryPolicy: TransferRetryPolicy = .default,
         tracker: BatchProgressTracker,
         executor: @escaping TransferExecutor,
@@ -76,6 +77,7 @@ final class BatchTransferCoordinator: Sendable {
                 group.addTask {
                     let succeeded = await self.transferSingleItemWithRetry(
                         item: item,
+                        transferType: transferType,
                         directoryManager: directoryManager,
                         retryPolicy: retryPolicy,
                         tracker: tracker,
@@ -100,6 +102,7 @@ final class BatchTransferCoordinator: Sendable {
                     group.addTask {
                         let succeeded = await self.transferSingleItemWithRetry(
                             item: nextItem,
+                            transferType: transferType,
                             directoryManager: directoryManager,
                             retryPolicy: retryPolicy,
                             tracker: tracker,
@@ -128,7 +131,7 @@ final class BatchTransferCoordinator: Sendable {
                         remotePath: item.remotePath,
                         bytesTransferred: 0,
                         totalBytes: item.fileSize,
-                        transferType: .upload,
+                        transferType: transferType,
                         status: .cancelled,
                         isDirectory: false,
                         itemCount: 1
@@ -157,6 +160,7 @@ final class BatchTransferCoordinator: Sendable {
 
     private func transferSingleItemWithRetry(
         item: TransferQueueItem,
+        transferType: TransferType,
         directoryManager: RemoteDirectoryManager,
         retryPolicy: TransferRetryPolicy,
         tracker: BatchProgressTracker,
@@ -191,7 +195,7 @@ final class BatchTransferCoordinator: Sendable {
             remotePath: item.remotePath,
             bytesTransferred: 0,
             totalBytes: item.fileSize,
-            transferType: .upload,
+            transferType: transferType,
             status: .inProgress,
             isDirectory: false,
             itemCount: 1,
@@ -259,7 +263,7 @@ final class BatchTransferCoordinator: Sendable {
                 }
                 return true
             } catch {
-                let isCancelled = Task.isCancelled || tracker.isBatchCancelled || error is CancellationError || String(describing: error).contains("CancellationError")
+                let isCancelled = Task.isCancelled || tracker.isBatchCancelled || error is CancellationError
 
                 if isCancelled {
                     if let snapshot = tracker.failOrCancelFile(id: item.id, totalBytes: item.fileSize, error: nil, isCancelled: true) {

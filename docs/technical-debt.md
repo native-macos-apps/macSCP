@@ -44,82 +44,60 @@ Tuy nhiên, quá trình phát triển tích lũy một số khoản nợ kỹ th
 
 ## 2. Nợ Kỹ thuật Kiến trúc (P1 — Architecture Debt)
 
-### 2.1. God Objects & Các hàm quá dài
+### 2.1. God Objects & Các hàm quá dài (Đã xử lý các điểm nóng chính — 2026-11-26)
 
-| File | Số dòng | Vấn đề chính |
-| --- | ---: | --- |
-| `macSCP/Features/Browser/FileBrowserViewModel.swift` | 1,355 | Ôm trọn kết nối SFTP/S3/Local, navigation, CRUD, clipboard, S3 URL, download, batch upload, Quick Look + cache, window routing, sheet states |
-| `macSCP/Data/S3/S3Session.swift` | 1,249 | Gom AWS SDK config, path/key normalization, URL builder, CRUD, multipart upload, stream reader, string-based error parsing |
-| `macSCP/Features/Browser/Components/NativeFileTableView.swift` | 830 | AppKit `NSOutlineView` + drag/drop + context menu + transfer trigger trong một file |
-| `macSCP/Features/Commander/Components/NativeServersTableView.swift` | 744 | Outline view + context menu (89 dòng) + cell views trong một file |
-| `macSCP/Features/Commander/CommanderViewModel.swift` | 653 | Lặp lại gần như toàn bộ cơ chế batch transfer của `FileBrowserViewModel` |
+| File | Trạng thái | Ghi chú |
+| --- | :--- | --- |
+| `macSCP/Features/Browser/FileBrowserViewModel.swift` | Đã tách (~610 dòng) | Đã tách `BrowserSessionProtocol`, `BrowserQuickLookController`, `FileTransferManager` |
+| `macSCP/Data/S3/S3Session.swift` | Đã tách (~410 dòng) | Đã tách `S3PathResolver`, `S3ErrorMapper`, `S3Session+Transfers` (`writeStream` đã tách nhỏ) |
+| `macSCP/Features/Commander/CommanderViewModel.swift` | Đã giảm (~550 dòng) | Đã dùng chung `FileTransferManager` thay vì lặp logic batch transfer |
+| `macSCP/Features/Browser/Components/NativeFileTableView.swift` | Còn tồn đọng (P2) | 830 dòng — AppKit `NSOutlineView` + drag/drop + context menu |
+| `macSCP/Features/Commander/Components/NativeServersTableView.swift` | Còn tồn đọng (P2) | 744 dòng — Outline view + context menu + cell views |
 
-**Các hàm dài cần tách nhỏ (>100 dòng):**
-* `BatchTransferCoordinator.executeBatch` — 133 dòng (`BatchTransferCoordinator.swift:30`)
+**Các hàm dài còn lại cần tách dần (P2):**
+* `BatchTransferCoordinator.executeBatch` & `transferSingleItemWithRetry` (`BatchTransferCoordinator.swift`)
 * `FileTypeService.typeDescription` — 126 dòng (`FileTypeService.swift:68`)
-* `S3Session.writeStream` — 124 dòng (`S3Session.swift:897`)
-* `BatchTransferCoordinator.transferSingleItemWithRetry` — 123 dòng (`BatchTransferCoordinator.swift:164`)
-* `CommanderViewModel.executeCommanderBatch` — 112 dòng (`CommanderViewModel.swift:463`)
 * `SFTPTransferEngine.uploadSingleFile` & `downloadSingleFile` — 104 dòng mỗi hàm (`SFTPTransferEngine.swift:100,303`)
 
-### 2.2. Leaky Abstraction theo loại kết nối
-* **Vị trí:** `macSCP/Features/Browser/FileBrowserViewModel.swift` (L122–L124, L257–L481)
-* **Vấn đề:** `FileBrowserViewModel` giữ trực tiếp `sftpSession`, `s3Session` và `fileRepository`, dẫn tới các khối `if isLocal ... else if connection.connectionType == .s3 ... else ...` lặp lại ở hầu hết các method.
-* **Hướng xử lý:** Trừu tượng hóa vòng đời kết nối (`connect`, `disconnect`, `currentPath`) qua một protocol chung thay vì để ViewModel phân nhánh theo giao thức.
+### 2.2. ~~Leaky Abstraction theo loại kết nối~~ (Đã xử lý — 2026-11-26)
+* **Giải pháp đã triển khai:** Giới thiệu `BrowserSessionProtocol` (`macSCP/Features/Browser/BrowserSession.swift`) với 3 triển khai `LocalBrowserSession`, `SFTPBrowserSession`, và `S3BrowserSession`. `FileBrowserViewModel` không còn giữ trực tiếp `sftpSession`/`s3Session` hay phân nhánh theo giao thức.
 
-### 2.3. Lạm dụng Singleton phá vỡ Dependency Injection
-* **Vị trí:** `FileBrowserViewModel.swift`, `CommanderViewModel.swift`, `SettingsView.swift`, `AppLockManager.swift`
-* **Vấn đề:**
-  * Gọi trực tiếp `SSHKeyStorageService.shared`, `TransferSettings.shared`, `BatchTransferCoordinator.shared`, `WindowManager.shared`, `AppLockManager.shared`, `KnownHostsManager.shared`, `BiometricAuthService.shared` thay vì nhận qua `init` từ `DependencyContainer`.
-  * `AppLockManager.init(biometricService:)` (L102) bị đánh dấu `private`, khiến không thể unit test với mock biometric service.
+### 2.3. ~~Lạm dụng Singleton phá vỡ Dependency Injection~~ (Đã xử lý — 2026-11-26)
+* **Giải pháp đã triển khai:** Bổ sung `transferSettings`, `batchTransferCoordinator`, `knownHostsManager`, `biometricAuthService` vào `DependencyContainer`; inject qua `init` tại `FileBrowserViewModel`, `CommanderViewModel`, và `SettingsView`; mở `internal init(userDefaults:)` cho `KnownHostsManager` và `SSHKeyStorageService` (cùng với `AppLockManager` đã mở ở P0).
 
-### 2.4. Rò rỉ Bộ nhớ & File tạm trong Quick Look
-* **Vị trí:** `macSCP/Features/Browser/FileBrowserViewModel.swift` (L100, L1275–L1337)
-* **Vấn đề:**
-  * `quickLookCache: [String: QuickLookContent]` lưu `Data` ảnh/PDF không giới hạn dung lượng, không có chính sách eviction (LRU/`NSCache`) và không bao giờ được dọn khi `disconnect()`.
-  * Lỗi mạng tạm thời cũng bị ghi vào `quickLookCache` (L1332) nên không thể preview lại trong cùng phiên.
-  * Tải ảnh/PDF về file tạm (L1289–L1312) không dùng `defer` để xóa file tạm nếu `Data(contentsOf:)` ném lỗi hoặc task bị hủy.
+### 2.4. ~~Rò rỉ Bộ nhớ & File tạm trong Quick Look~~ (Đã xử lý — 2026-11-26)
+* **Giải pháp đã triển khai:** Tách `BrowserQuickLookController` (`macSCP/Features/Browser/BrowserQuickLookController.swift`) sử dụng `NSCache` giới hạn bộ nhớ (50 entries / 50 MB), gọi `reset()` xóa cache khi `disconnect()`, không cache kết quả `.error(...)`, và dùng `defer` xóa file tạm ảnh/PDF trong mọi trường hợp lỗi/hủy.
 
 ---
 
 ## 3. Code Smells, Trùng lặp & Dead Code (P1–P2)
 
-### 3.1. Trùng lặp mã nguồn (DRY Violations)
-* **Batch Transfer State & Snapshot:** Lặp lại giữa `FileBrowserViewModel.swift` (L835–L984) và `CommanderViewModel.swift` (L463–L599). Ngoài ra, `CommanderViewModel.applyBatchSnapshot` (L577–L599) không kiểm tra `lastAppliedSnapshotSequence` nên snapshot cũ có thể ghi đè snapshot mới.
-* **Keychain CRUD lặp 3 lần:**
-  * `KeychainService.swift` lặp toàn bộ CRUD giữa Password (L19–L116) và S3 Credentials (L120–L217).
-  * `SSHKeyStorageService.swift` lặp lại boilerplate `SecItem*` lần thứ 3, và bỏ qua `OSStatus` khi gọi `SecItemDelete` (L126) dù hàm khai báo `throws`.
-* **Single Download:** `downloadFile` (L667–L756) và `downloadFileToURL` (L1041–L1088) trong `FileBrowserViewModel.swift` lặp lại logic tạo `TransferProgress`, throttle và cập nhật `recentTransfers`.
-* **SFTP Connect:** Hai overload password (L23–L54) và private key (L56–L90) trong `SFTPSession.swift` lặp logic normalize host, tạo `SSHConnection`, cleanup lỗi và `getRealPath`.
+### 3.1. ~~Trùng lặp mã nguồn (DRY Violations)~~ (Đã xử lý — 2026-11-26)
+* **Batch Transfer State & Snapshot:** Đã gom vào `FileTransferManager` dùng chung cho cả `FileBrowserViewModel` và `CommanderViewModel`, bảo vệ `lastAppliedSnapshotSequence` đồng nhất.
+* **Keychain CRUD:** Đã gom vào `KeychainStore` (`macSCP/Data/Keychain/KeychainStore.swift`) dùng chung cho `KeychainService` và `SSHKeyStorageService` (kiểm tra đầy đủ `OSStatus` cho `SecItemDelete`).
+* **Single Download:** Đã gom `startDownload` và `downloadToURL` trong `FileTransferManager`.
+* **SFTP Connect:** Đã gom logic khởi tạo/cleanup chung vào `SFTPSession.establishConnection`.
 
-### 3.2. Dead Code & API gây hiểu nhầm
-* `FileBrowserViewModel.navigateWithoutHistory(to:)` (L463–L481) — không có nơi nào gọi.
-* `DataStore.createWithRecovery()` (L52–L54) — comment mô tả recreate store nhưng chỉ trả về `DataStore.shared.modelContainer` và không được sử dụng.
-* `DataStore.preview` (L60–L64) — khởi tạo với `isStoredInMemoryOnly: false`, khiến Xcode Preview ghi vào DB thật trên đĩa.
-* `AcceptAllServerAuthDelegate` (`macSCP/Data/SFTP/Engine/SSHKeyAuth.swift:72–78`) — không được dùng ở đâu nhưng vẫn tồn tại trong production code (rủi ro tắt xác thực MITM nếu vô tình dùng lại).
-* `SSHKeyParser` (`SSHKeyAuth.swift:95, 130, 201–222`) — thông báo hỗ trợ `"Ed25519, P-256"` và nhận tham số `passphrase: String?`, nhưng thực tế chỉ parse `ssh-ed25519` không mã hóa và bỏ qua hoàn toàn `passphrase`.
-* `AnalyticsService.swift` (321 dòng) — chỉ gọi `logDebug`, không gửi telemetry đi đâu nhưng vẫn duy trì nhiều khóa `UserDefaults` và `NSLock`.
+### 3.2. ~~Dead Code & API gây hiểu nhầm~~ (Đã xử lý phần lớn — 2026-11-26)
+* Đã xóa `FileBrowserViewModel.navigateWithoutHistory(to:)`, `DataStore.createWithRecovery()`, `AcceptAllServerAuthDelegate`.
+* `DataStore.preview` đã dùng `inMemoryOnly: true` (từ P0).
+* `SSHKeyParser.KeyError.unsupportedKeyType` đã đồng bộ thông báo chỉ hỗ trợ `Ed25519 (unencrypted OpenSSH format)`.
+* **Còn tồn đọng (P2):** `AnalyticsService.swift` (321 dòng) chỉ ghi debug log cục bộ nhưng vẫn duy trì nhiều khóa `UserDefaults` và `NSLock` — giữ nguyên để không ảnh hưởng thống kê local hiện có, có thể đơn giản hóa sau.
 
-### 3.3. Thiếu nhất quán & Xử lý lỗi mong manh
-* **Giới hạn `recentTransfers` không đồng nhất:** cắt ở `10` trong `downloadFile`/`downloadFileToURL` (L713, L1073) nhưng cắt ở `30` trong `cancelTransfer`/`cancelAllTransfers`/`completeTransfer`/`failTransfer` (L1008, L1032, L1131, L1144).
-* **Hardcode `transferType: .upload`** trong `BatchTransferCoordinator.swift` (L139, L200) kể cả khi Commander đang thực hiện download (Remote → Local).
-* **Stringly-typed error handling:**
-  * `String(describing: error).contains("CancellationError")` ở `FileBrowserViewModel.swift:726` và `BatchTransferCoordinator.swift:251`.
-  * `parseS3Error` / `parseConnectionError` ở `S3Session.swift:1177–1207` dựa trên chuỗi `.lowercased()` thay vì kiểm tra typed SDK errors.
-* **Nuốt lỗi / Bỏ qua thao tác âm thầm:**
-  * `CommanderViewModel.openTerminal` (L633): `_ = await TerminalLauncher.launchTerminal(...)` nuốt luôn lỗi Automation/AppleScript.
-  * `FileBrowserViewModel.uploadURLs` (L783) và `CommanderViewModel.performTransfer` (L404) âm thầm bỏ qua nếu đang có batch chạy mà không thông báo cho người dùng.
-  * Log category hardcode `.sftp` trong các thao tác CRUD của `FileBrowserViewModel` (L494–L541) kể cả khi đang dùng S3 hoặc Local.
-* **Overhead logging không cần thiết:** `S3Session.log(_:)` (L27–L31) tạo `Task { @MainActor in logInfo(...) }` cho mọi dòng log dù `Logger.shared` đã `nonisolated`.
+### 3.3. ~~Thiếu nhất quán & Xử lý lỗi mong manh~~ (Đã xử lý — 2026-11-26)
+* **Giới hạn `recentTransfers`:** Chuẩn hóa đồng nhất `FileTransferManager.maxRecentTransfers = 30`.
+* **`transferType` trong `BatchTransferCoordinator`:** Truyền tham số `transferType` (`.download` khi Commander truyền Remote → Local, `.upload` cho các trường hợp khác).
+* **Cancellation & S3 error mapping:** Bỏ kiểm tra `String(describing: error).contains("CancellationError")`; tách `S3ErrorMapper` ưu tiên ánh xạ typed AWS/URLError trước khi fallback chuỗi.
+* **Không bỏ qua batch âm thầm & Log category chuẩn:** Hiển thị `AppError` rõ ràng khi có batch đang chạy; dùng `session.logCategory` (`.local`/`.s3`/`.sftp`) cho toàn bộ thao tác CRUD. (Lỗi mở Terminal đã được xử lý khi chuyển sang Integrated SSH Terminal ở P0).
+* **Bỏ overhead logging ở `S3Session`:** Gọi trực tiếp `logInfo(..., category: .s3)` thay vì bọc `Task { @MainActor ... }`.
 
 ---
 
 ## 4. Vệ sinh Repo & Khoảng trống Kiểm thử (P2)
 
-* **File cá nhân của Xcode bị track trong Git:**
-  * `macSCP.xcodeproj/xcuserdata/nevilmacwan.xcuserdatad/xcschemes/xcschememanagement.plist` đang được commit. Cần gỡ khỏi index (`git rm --cached`) và kiểm tra `.gitignore`.
-* **Khoảng trống Unit Tests ở tầng cốt lõi:**
-  * Hiện chưa có unit test riêng cho: `SFTPSession`, `SFTPClient`, `SFTPTransferEngine`, `SFTPMessages`, `S3Session`, `SSHKeyParser`, `KnownHostsManager`, `TerminalLauncher`, `AppLockManager`, `ConnectionRepository`, `FolderRepository`, `LocalFileRepository`, `StreamingFileScanner`, `RemoteDirectoryManager`, `TransferRetryPolicy`.
+* ~~**File cá nhân của Xcode bị track trong Git:**~~ (Đã xử lý — 2026-11-26: đã `git rm --cached` `xcschememanagement.plist`; `.gitignore` đã chứa `xcuserdata/`).
+* **Độ phủ Unit Tests:** Đã bổ sung unit tests cho `SSHKeyParser`, `KnownHostsManager`, `TransferRetryPolicy`, `StreamingFileScanner`, `RemoteDirectoryManager`, `S3PathResolver`, `S3ErrorMapper`, `BrowserQuickLookController`, `FileTransferManager`, và mở rộng `AppLockManager` (tổng 155 unit tests đều pass).
+  * *Còn tồn đọng (P2):* Unit test sâu hơn cho lớp mạng cấp thấp (`SFTPSession`, `SFTPClient`, `SFTPTransferEngine`, `SFTPMessages`, `S3Session`, `ConnectionRepository`, `FolderRepository`, `LocalFileRepository`).
 
 ---
 
@@ -134,13 +112,14 @@ Tuy nhiên, quá trình phát triển tích lũy một số khoản nợ kỹ th
 - [x] ~~Loại bỏ `fatalError()` ở `DataStore.swift` / `NativeServersTableView.swift` và force unwrap `s3!` ở `S3Session.swift`.~~ (2026-11-26)
 
 ### P1 — Giảm nợ Kiến trúc & Dọn dẹp
-- [ ] Tách `FileBrowserViewModel` thành `TransferManager` (dùng chung với `CommanderViewModel`), `QuickLookController` (dùng `NSCache` + `defer` xóa file tạm + không cache lỗi), và `FileOperationsService`.
-- [ ] Gom Keychain CRUD boilerplate vào một generic/internal helper dùng chung cho `KeychainService` và `SSHKeyStorageService`.
-- [ ] Tách `S3Session.swift` thành các module nhỏ hơn (path/URL builder, transfer/multipart, error mapper).
-- [ ] Xóa dead code (`navigateWithoutHistory`, `createWithRecovery`, `AcceptAllServerAuthDelegate`), sửa `DataStore.preview` sang in-memory, và đồng bộ thông báo lỗi/tham số ở `SSHKeyParser`.
-- [ ] Chuẩn hóa `recentTransfers` limit, `transferType` trong `BatchTransferCoordinator`, log category, và hiển thị lỗi khi mở Terminal thất bại.
+- [x] ~~Tách `FileBrowserViewModel` thành `FileTransferManager` (dùng chung với `CommanderViewModel`), `BrowserQuickLookController` (dùng `NSCache` + `defer` xóa file tạm + không cache lỗi), và `BrowserSessionProtocol`.~~ (2026-11-26)
+- [x] ~~Gom Keychain CRUD boilerplate vào `KeychainStore` dùng chung cho `KeychainService` và `SSHKeyStorageService`.~~ (2026-11-26)
+- [x] ~~Tách `S3Session.swift` thành `S3PathResolver`, `S3ErrorMapper`, và `S3Session+Transfers` (+ bỏ logging overhead `Task { @MainActor }`).~~ (2026-11-26)
+- [x] ~~Xóa dead code (`navigateWithoutHistory`, `createWithRecovery`, `AcceptAllServerAuthDelegate`), sửa `DataStore.preview` sang in-memory, và đồng bộ thông báo lỗi ở `SSHKeyParser`.~~ (2026-11-26)
+- [x] ~~Chuẩn hóa `recentTransfers` limit (`30`), `transferType` trong `BatchTransferCoordinator`, log category (`.local`/`.s3`/`.sftp`), và thông báo lỗi khi đang có batch chạy.~~ (2026-11-26)
 
 ### P2 — Vệ sinh Repo & Tăng độ phủ Test
-- [ ] Xóa `xcuserdata` khỏi Git index và cập nhật `.gitignore`.
-- [ ] Inject các dependency thay vì gọi `.shared` trực tiếp; mở `internal init(biometricService:)` cho `AppLockManager`.
-- [ ] Bổ sung unit test cho `SSHKeyParser`, `KnownHostsManager`, `TerminalLauncher` (command builder), `TransferRetryPolicy`, `StreamingFileScanner`, `RemoteDirectoryManager`, và `AppLockManager`.
+- [x] ~~Xóa `xcuserdata` khỏi Git index (`.gitignore` đã có `xcuserdata/`).~~ (2026-11-26)
+- [x] ~~Inject các dependency qua `DependencyContainer` (`FileBrowserViewModel`, `CommanderViewModel`, `SettingsView`); mở `internal init` cho `AppLockManager`, `KnownHostsManager`, `SSHKeyStorageService`.~~ (2026-11-26)
+- [x] ~~Bổ sung unit test cho `SSHKeyParser`, `KnownHostsManager`, `TransferRetryPolicy`, `StreamingFileScanner`, `RemoteDirectoryManager`, `S3PathResolver`, `S3ErrorMapper`, `BrowserQuickLookController`, `FileTransferManager`, và `AppLockManager`.~~ (2026-11-26 — 155/155 tests passed)
+- [ ] (Deferred P2) Tách nhỏ `NativeFileTableView.swift` (830 dòng), `NativeServersTableView.swift` (744 dòng), `FileTypeService.typeDescription`, và bổ sung unit test sâu cho tầng SFTP/SwiftData repository (`SFTPSession`, `SFTPClient`, `SFTPTransferEngine`, `ConnectionRepository`, `FolderRepository`).

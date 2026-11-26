@@ -46,12 +46,28 @@ final class DependencyContainer: ObservableObject {
         AppLockManager.shared
     }()
 
+    lazy var biometricAuthService: BiometricAuthServiceProtocol = {
+        BiometricAuthService.shared
+    }()
+
     lazy var clipboardService: ClipboardService = {
         ClipboardService.shared
     }()
 
     lazy var windowManager: WindowManager = {
         WindowManager.shared
+    }()
+
+    lazy var transferSettings: TransferSettings = {
+        TransferSettings.shared
+    }()
+
+    lazy var batchTransferCoordinator: BatchTransferCoordinator = {
+        BatchTransferCoordinator.shared
+    }()
+
+    lazy var knownHostsManager: KnownHostsManager = {
+        KnownHostsManager.shared
     }()
 
     // MARK: - SFTP Session Factory
@@ -101,7 +117,11 @@ final class DependencyContainer: ObservableObject {
             sftpSession: sftpSession,
             fileRepository: fileRepository,
             clipboardService: clipboardService,
-            password: password
+            password: password,
+            sshKeyRepository: sshKeyRepository,
+            windowManager: windowManager,
+            transferSettings: transferSettings,
+            batchTransferCoordinator: batchTransferCoordinator
         )
     }
 
@@ -116,7 +136,10 @@ final class DependencyContainer: ObservableObject {
             s3Session: s3Session,
             fileRepository: fileRepository,
             clipboardService: clipboardService,
-            secretAccessKey: secretAccessKey
+            secretAccessKey: secretAccessKey,
+            windowManager: windowManager,
+            transferSettings: transferSettings,
+            batchTransferCoordinator: batchTransferCoordinator
         )
     }
 
@@ -129,7 +152,10 @@ final class DependencyContainer: ObservableObject {
         return FileBrowserViewModel(
             localRepository: localRepo,
             clipboardService: clipboardService,
-            initialPath: initialPath
+            initialPath: initialPath,
+            windowManager: windowManager,
+            transferSettings: transferSettings,
+            batchTransferCoordinator: batchTransferCoordinator
         )
     }
 

@@ -27,29 +27,8 @@ actor SFTPSession: SFTPSessionProtocol {
         password: String
     ) async throws {
         logInfo("Connecting to \(username)@\(host):\(port) with password", category: .sftp)
-
-        let normalizedHost = (host.lowercased() == "localhost") ? "127.0.0.1" : host
-        let conn = SSHConnection()
-        self.connection = conn
-
-        do {
-            let userAuth = SimplePasswordDelegate(username: username, password: password)
-            let sftpClient = try await conn.connect(
-                host: normalizedHost,
-                port: port,
-                userAuthDelegate: userAuth
-            )
-
-            self.client = sftpClient
-            self.isConnected = true
-            self.currentPath = try await getRealPath(at: ".")
-            logInfo("Connected successfully to \(host)", category: .sftp)
-        } catch {
-            await conn.disconnect()
-            self.connection = nil
-            self.client = nil
-            self.isConnected = false
-            throw parseError(error)
+        try await establishConnection(host: host, port: port, authLabel: "password") {
+            SimplePasswordDelegate(username: username, password: password)
         }
     }
 
@@ -61,15 +40,24 @@ actor SFTPSession: SFTPSessionProtocol {
         passphrase: String?
     ) async throws {
         logInfo("Connecting to \(username)@\(host):\(port) with in-app private key", category: .sftp)
+        try await establishConnection(host: host, port: port, authLabel: "in-app private key") {
+            let nioPrivateKey = try SSHKeyParser.parsePrivateKey(from: privateKeyContent, passphrase: passphrase)
+            return SSHKeyUserAuthDelegate(username: username, privateKey: nioPrivateKey)
+        }
+    }
 
+    private func establishConnection(
+        host: String,
+        port: Int,
+        authLabel: String,
+        makeAuthDelegate: () throws -> any NIOSSHClientUserAuthenticationDelegate
+    ) async throws {
         let normalizedHost = (host.lowercased() == "localhost") ? "127.0.0.1" : host
         let conn = SSHConnection()
         self.connection = conn
 
         do {
-            let nioPrivateKey = try SSHKeyParser.parsePrivateKey(from: privateKeyContent, passphrase: passphrase)
-            let userAuth = SSHKeyUserAuthDelegate(username: username, privateKey: nioPrivateKey)
-
+            let userAuth = try makeAuthDelegate()
             let sftpClient = try await conn.connect(
                 host: normalizedHost,
                 port: port,
@@ -79,7 +67,7 @@ actor SFTPSession: SFTPSessionProtocol {
             self.client = sftpClient
             self.isConnected = true
             self.currentPath = try await getRealPath(at: ".")
-            logInfo("Connected successfully to \(host) using in-app private key", category: .sftp)
+            logInfo("Connected successfully to \(host) using \(authLabel)", category: .sftp)
         } catch {
             await conn.disconnect()
             self.connection = nil

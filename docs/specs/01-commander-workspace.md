@@ -94,4 +94,4 @@ Không gian làm việc chính của MacSCP thiết kế theo mô hình **Dual-P
 ## 8. Known Gaps & Technical Debt
 - ~~**P0 — Race condition & rò rỉ session:** `switchToLocal`, `switchToServers`, `completeConnect` trong `CommanderViewModel.swift`~~ (Đã xử lý — 2026-11-26).
 - ~~**P0 — `fatalError()` ở `NativeServersTableView.swift:197`**~~ (Đã xử lý — 2026-11-26).
-- **P1 — Trùng lặp batch transfer state với `FileBrowserViewModel`** (`docs/technical-debt.md#2.1`, `#3.1`, `#3.3`).
+- ~~**P1 — Trùng lặp batch transfer state với `FileBrowserViewModel`**~~ (Đã xử lý — 2026-11-26: dùng chung `FileTransferManager` với `lastAppliedSnapshotSequence` guard và `transferType` chính xác).

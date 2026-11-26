@@ -18,10 +18,17 @@ enum HostKeyVerificationResult: Sendable {
 
 final class KnownHostsManager: @unchecked Sendable {
     static let shared = KnownHostsManager()
-    private let storageKey = "com.macSCP.knownHosts"
+    private let storageKey: String
+    private let userDefaults: UserDefaults
     private let lock = NSLock()
 
-    private init() {}
+    internal init(
+        userDefaults: UserDefaults = .standard,
+        storageKey: String = "com.macSCP.knownHosts"
+    ) {
+        self.userDefaults = userDefaults
+        self.storageKey = storageKey
+    }
 
     static func computeFingerprint(for hostKey: NIOSSHPublicKey) -> String {
         let keyString = String(openSSHPublicKey: hostKey)
@@ -41,8 +48,7 @@ final class KnownHostsManager: @unchecked Sendable {
         let identifier = "\(host.lowercased()):\(port)"
         let actualFingerprint = Self.computeFingerprint(for: hostKey)
 
-        let defaults = UserDefaults.standard
-        var knownHosts = defaults.dictionary(forKey: storageKey) as? [String: String] ?? [:]
+        var knownHosts = userDefaults.dictionary(forKey: storageKey) as? [String: String] ?? [:]
 
         if let expectedFingerprint = knownHosts[identifier] {
             if expectedFingerprint == actualFingerprint {
@@ -53,7 +59,7 @@ final class KnownHostsManager: @unchecked Sendable {
         } else {
             // Trust On First Use (TOFU): Record host key on first connection
             knownHosts[identifier] = actualFingerprint
-            defaults.set(knownHosts, forKey: storageKey)
+            userDefaults.set(knownHosts, forKey: storageKey)
             return .newHostAdded(fingerprint: actualFingerprint)
         }
     }
@@ -66,10 +72,9 @@ final class KnownHostsManager: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
 
-        let defaults = UserDefaults.standard
-        var knownHosts = defaults.dictionary(forKey: storageKey) as? [String: String] ?? [:]
+        var knownHosts = userDefaults.dictionary(forKey: storageKey) as? [String: String] ?? [:]
         knownHosts.removeValue(forKey: identifier)
-        defaults.set(knownHosts, forKey: storageKey)
+        userDefaults.set(knownHosts, forKey: storageKey)
     }
 
     /// All trusted hosts as (identifier "host:port", fingerprint), sorted by identifier.
@@ -77,7 +82,7 @@ final class KnownHostsManager: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
 
-        let knownHosts = UserDefaults.standard.dictionary(forKey: storageKey) as? [String: String] ?? [:]
+        let knownHosts = userDefaults.dictionary(forKey: storageKey) as? [String: String] ?? [:]
         return knownHosts
             .map { (identifier: $0.key, fingerprint: $0.value) }
             .sorted { $0.identifier < $1.identifier }

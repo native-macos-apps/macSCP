@@ -98,7 +98,7 @@ Cung cấp trình duyệt tập tin chuẩn Finder cho cả **Local**, **SFTP**,
 ---
 
 ## 8. Known Gaps & Technical Debt
-- **P1 — God Object & Leaky Abstraction:** `FileBrowserViewModel.swift` dài 1,355 dòng và phân nhánh trực tiếp theo `sftpSession`/`s3Session`/`isLocal`; cần tách `TransferManager`, `QuickLookController`, `FileOperationsService` (`docs/technical-debt.md#2.1`, `#2.2`).
-- **P1 — Rò rỉ bộ nhớ & file tạm trong Quick Look:** `quickLookCache` không giới hạn dung lượng (chưa dùng `NSCache`), không dọn khi `disconnect()`, cache cả lỗi mạng tạm thời, và không có `defer` xóa file tạm (`docs/technical-debt.md#2.4`).
-- **P0 — `LocalFileStreamReader` data race** (`docs/technical-debt.md#1.3`).
-- **P2 — Dead code:** `navigateWithoutHistory(to:)` không được gọi; log category CRUD bị hardcode `.sftp` (`docs/technical-debt.md#3.2`, `#3.3`).
+- ~~**P1 — God Object & Leaky Abstraction:** `FileBrowserViewModel.swift` dài 1,355 dòng và phân nhánh trực tiếp theo `sftpSession`/`s3Session`/`isLocal`~~ (Đã xử lý — 2026-11-26: tách `BrowserSessionProtocol`, `BrowserQuickLookController`, và `FileTransferManager`).
+- ~~**P1 — Rò rỉ bộ nhớ & file tạm trong Quick Look**~~ (Đã xử lý — 2026-11-26: `BrowserQuickLookController` dùng `NSCache`, xóa cache khi `disconnect()`, không cache lỗi, và `defer` xóa file tạm).
+- ~~**P0 — `LocalFileStreamReader` data race**~~ (Đã xử lý — 2026-11-26: chuyển sang `actor`).
+- ~~**P2 — Dead code:** `navigateWithoutHistory(to:)` không được gọi; log category CRUD bị hardcode `.sftp`~~ (Đã xử lý — 2026-11-26: xóa `navigateWithoutHistory`, dùng `session.logCategory`).

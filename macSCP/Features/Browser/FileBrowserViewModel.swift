@@ -18,99 +18,63 @@ final class FileBrowserViewModel {
     private(set) var isConnected: Bool = false
     var error: AppError?
 
-    // MARK: - Transfer Progress State
-    private(set) var activeTransfers: [UUID: TransferProgress] = [:]
-    private(set) var recentTransfers: [TransferProgress] = []  // Completed/failed transfers
-    private var transferTasks: [UUID: Task<Void, Never>] = [:]  // Tasks for cancellation
-    private var currentBatchTracker: BatchProgressTracker?
-    private var lastAppliedSnapshotSequence: UInt64 = 0
-    var isShowingTransfersPopover: Bool = false
-    var activeBatch: BatchTransferProgress?
-    private var isBatchCancelled: Bool = false
+    // MARK: - Composed Controllers
+    let transferManager: FileTransferManager
+    let quickLookController: BrowserQuickLookController
 
-    /// Whether any transfer is currently in progress
-    var hasActiveTransfers: Bool {
-        !activeTransfers.isEmpty || (activeBatch?.isInProgress ?? false)
+    // MARK: - Transfer Progress Facade
+    var activeTransfers: [UUID: TransferProgress] { transferManager.activeTransfers }
+    var recentTransfers: [TransferProgress] { transferManager.recentTransfers }
+    var lastFailedUploadItems: [TransferQueueItem] { transferManager.lastFailedItems }
+
+    var isShowingTransfersPopover: Bool {
+        get { transferManager.isShowingTransfersPopover }
+        set { transferManager.isShowingTransfersPopover = newValue }
     }
 
-    /// Total number of active transfers
-    var activeTransferCount: Int {
-        if let batch = activeBatch, batch.isInProgress {
-            return activeTransfers.count
-        }
-        return activeTransfers.values.reduce(0) { $0 + ($1.isDirectory ? max($1.itemCount, 1) : 1) }
+    var activeBatch: BatchTransferProgress? {
+        get { transferManager.activeBatch }
+        set { transferManager.activeBatch = newValue }
     }
 
-    /// Formatted badge count text: "99+" if large, otherwise numeric string
-    var activeTransferBadgeText: String {
-        let count = activeTransferCount
-        if count > 99 {
-            return "99+"
-        }
-        return "\(count)"
-    }
+    var hasActiveTransfers: Bool { transferManager.hasActiveTransfers }
+    var activeTransferCount: Int { transferManager.activeTransferCount }
+    var activeTransferBadgeText: String { transferManager.activeTransferBadgeText }
+    var allTransfers: [TransferProgress] { transferManager.allTransfers }
+    var overallProgress: Double { transferManager.overallProgress }
 
-    /// All transfers for display (active + retained failed + recent)
-    var allTransfers: [TransferProgress] {
-        let active = activeTransfers.values.sorted { $0.startTime > $1.startTime }
-        let recentIds = Set(recentTransfers.map { $0.id })
-        let extraFailed = (activeBatch?.failedTransfers ?? []).filter { !recentIds.contains($0.id) }
-        return active + extraFailed + recentTransfers
-    }
-
-    /// Overall progress of all active transfers (0.0 to 1.0)
-    var overallProgress: Double {
-        if let batch = activeBatch, batch.totalBytes > 0 {
-            return batch.fractionCompleted
-        }
-        guard !activeTransfers.isEmpty else { return 0 }
-        let totalBytes = activeTransfers.values.reduce(0) { $0 + $1.totalBytes }
-        let transferredBytes = activeTransfers.values.reduce(0) { $0 + $1.bytesTransferred }
-        guard totalBytes > 0 else { return 0 }
-        return Double(transferredBytes) / Double(totalBytes)
-    }
-
+    // MARK: - Selection & Sorting State
     var selectedFiles: Set<UUID> = []
     var primarySelectedFile: RemoteFile? {
         didSet {
-            if isShowingQuickLook {
-                if let file = primarySelectedFile {
-                    showQuickLook(for: file)
-                } else {
-                    quickLookFile = nil
-                    quickLookTask?.cancel()
-                }
-            }
+            quickLookController.handlePrimarySelectionChanged(primarySelectedFile)
         }
     }
     var sortCriteria: RemoteFile.SortCriteria = .name
     var sortAscending: Bool = true
     var showHiddenFiles: Bool = false
 
-    // Quick Look state
-    var isShowingQuickLook: Bool = false {
-        didSet {
-            if !isShowingQuickLook {
-                quickLookTask?.cancel()
-            }
-        }
+    // MARK: - Quick Look Facade
+    var isShowingQuickLook: Bool {
+        get { quickLookController.isShowingQuickLook }
+        set { quickLookController.isShowingQuickLook = newValue }
     }
-    var quickLookFile: RemoteFile?
-    private(set) var quickLookContent: QuickLookContent = .loading
-    private var quickLookCache: [String: QuickLookContent] = [:]
-    private var quickLookTask: Task<Void, Never>?
+    var quickLookFile: RemoteFile? {
+        get { quickLookController.quickLookFile }
+        set { quickLookController.quickLookFile = newValue }
+    }
+    var quickLookContent: QuickLookContent { quickLookController.quickLookContent }
 
-    // Sheet states
+    // MARK: - Sheet States
     var isShowingNewFolderSheet = false
     var isShowingNewFileSheet = false
     var isShowingRenameSheet = false
     var isShowingDeleteConfirmation = false
 
-    // File to operate on
     var fileToRename: RemoteFile?
     var filesToDelete: [RemoteFile] = []
 
-    // Window opening state
+    // MARK: - Window Opening State
     var pendingFileInfoWindowId: String?
     var pendingEditorWindowId: String?
 
@@ -119,16 +83,16 @@ final class FileBrowserViewModel {
     private let password: String
 
     // MARK: - Dependencies
-    private let sftpSession: SFTPSessionProtocol?
-    private let s3Session: S3SessionProtocol?
+    private let session: BrowserSessionProtocol
     let fileRepository: FileRepositoryProtocol
     private let clipboardService: ClipboardService
+    private let windowManager: WindowManager
     private let navigationService = NavigationService()
 
     // MARK: - Computed Properties
 
     var isLocal: Bool {
-        connection.connectionType == .local
+        session.isLocal
     }
 
     // MARK: - Initialization (SFTP)
@@ -137,14 +101,28 @@ final class FileBrowserViewModel {
         sftpSession: SFTPSessionProtocol,
         fileRepository: FileRepositoryProtocol,
         clipboardService: ClipboardService,
-        password: String
+        password: String,
+        sshKeyRepository: SSHKeyRepositoryProtocol = SSHKeyStorageService.shared,
+        windowManager: WindowManager = .shared,
+        transferSettings: TransferSettings = .shared,
+        batchTransferCoordinator: BatchTransferCoordinator = .shared
     ) {
         self.connection = connection
-        self.sftpSession = sftpSession
-        self.s3Session = nil
+        self.password = password
+        self.session = SFTPBrowserSession(
+            connection: connection,
+            password: password,
+            session: sftpSession,
+            sshKeyRepository: sshKeyRepository
+        )
         self.fileRepository = fileRepository
         self.clipboardService = clipboardService
-        self.password = password
+        self.windowManager = windowManager
+        self.transferManager = FileTransferManager(
+            coordinator: batchTransferCoordinator,
+            transferSettings: transferSettings
+        )
+        self.quickLookController = BrowserQuickLookController(fileRepository: fileRepository)
     }
 
     // MARK: - Initialization (S3)
@@ -153,24 +131,38 @@ final class FileBrowserViewModel {
         s3Session: S3SessionProtocol,
         fileRepository: FileRepositoryProtocol,
         clipboardService: ClipboardService,
-        secretAccessKey: String
+        secretAccessKey: String,
+        windowManager: WindowManager = .shared,
+        transferSettings: TransferSettings = .shared,
+        batchTransferCoordinator: BatchTransferCoordinator = .shared
     ) {
         self.connection = connection
-        self.sftpSession = nil
-        self.s3Session = s3Session
+        self.password = secretAccessKey
+        self.session = S3BrowserSession(
+            connection: connection,
+            secretAccessKey: secretAccessKey,
+            session: s3Session
+        )
         self.fileRepository = fileRepository
         self.clipboardService = clipboardService
-        self.password = secretAccessKey
+        self.windowManager = windowManager
+        self.transferManager = FileTransferManager(
+            coordinator: batchTransferCoordinator,
+            transferSettings: transferSettings
+        )
+        self.quickLookController = BrowserQuickLookController(fileRepository: fileRepository)
     }
 
     // MARK: - Initialization (Local)
     init(
         localRepository: FileRepositoryProtocol,
         clipboardService: ClipboardService,
-        initialPath: String? = nil
+        initialPath: String? = nil,
+        windowManager: WindowManager = .shared,
+        transferSettings: TransferSettings = .shared,
+        batchTransferCoordinator: BatchTransferCoordinator = .shared
     ) {
-        let homeDir = LocalFileRepository.userHomeDirectory
-        let startingPath = initialPath ?? homeDir
+        let startingPath = initialPath ?? LocalFileRepository.userHomeDirectory
         self.connection = Connection(
             id: UUID(),
             name: "Mac",
@@ -178,11 +170,16 @@ final class FileBrowserViewModel {
             username: NSUserName(),
             connectionType: .local
         )
-        self.sftpSession = nil
-        self.s3Session = nil
+        self.password = ""
+        self.session = LocalBrowserSession()
         self.fileRepository = localRepository
         self.clipboardService = clipboardService
-        self.password = ""
+        self.windowManager = windowManager
+        self.transferManager = FileTransferManager(
+            coordinator: batchTransferCoordinator,
+            transferSettings: transferSettings
+        )
+        self.quickLookController = BrowserQuickLookController(fileRepository: localRepository)
         self.currentPath = startingPath
     }
 
@@ -190,11 +187,9 @@ final class FileBrowserViewModel {
 
     var sortedFiles: [RemoteFile] {
         var result = files
-
         if !showHiddenFiles {
             result = result.filter { !$0.isHidden }
         }
-
         return RemoteFile.sortedFiles(result, by: sortCriteria, ascending: sortAscending)
     }
 
@@ -202,17 +197,9 @@ final class FileBrowserViewModel {
         files.filter { selectedFiles.contains($0.id) }
     }
 
-    var canGoBack: Bool {
-        navigationService.canGoBack
-    }
-
-    var canGoForward: Bool {
-        navigationService.canGoForward
-    }
-
-    var canGoUp: Bool {
-        currentPath != "/"
-    }
+    var canGoBack: Bool { navigationService.canGoBack }
+    var canGoForward: Bool { navigationService.canGoForward }
+    var canGoUp: Bool { currentPath != "/" }
 
     var pathComponents: [PathComponent] {
         var components: [PathComponent] = []
@@ -220,14 +207,14 @@ final class FileBrowserViewModel {
 
         let targetPath = primarySelectedFile?.path ?? currentPath
         let parts = targetPath.split(separator: "/", omittingEmptySubsequences: true)
-        
+
         for (index, component) in parts.enumerated() {
             let componentString = String(component)
             currentAccumulatedPath = currentAccumulatedPath.appendingPathComponent(componentString)
-            
+
             let isLast = index == parts.count - 1
             let isSelectedFile = isLast && primarySelectedFile != nil && !(primarySelectedFile?.isDirectory ?? true)
-            
+
             let path: String
             if isSelectedFile {
                 path = currentAccumulatedPath
@@ -236,110 +223,39 @@ final class FileBrowserViewModel {
             }
             components.append(PathComponent(name: componentString, path: path))
         }
-        
+
         return components
     }
 
-    var clipboardDisplayText: String {
-        clipboardService.displayText
-    }
-
-    var hasClipboardItems: Bool {
-        !clipboardService.isEmpty
-    }
-
-    var canPaste: Bool {
-        clipboardService.canPaste(to: connection.id)
-    }
+    var clipboardDisplayText: String { clipboardService.displayText }
+    var hasClipboardItems: Bool { !clipboardService.isEmpty }
+    var canPaste: Bool { clipboardService.canPaste(to: connection.id) }
 
     // MARK: - Connection
 
     func connect() async {
         state = .loading
 
-        if isLocal {
-            isConnected = true
-            if currentPath.isEmpty || currentPath == "/" {
-                currentPath = LocalFileRepository.userHomeDirectory
-            }
-            navigationService.reset(to: currentPath)
-            AnalyticsService.trackFileBrowserOpened(protocol: .local)
-            await loadFiles()
-            return
-        }
-
         do {
-            if connection.connectionType == .s3 {
-                // S3 connection
-                guard let s3Session = s3Session else {
-                    throw AppError.notConnected
-                }
-                try await s3Session.connect(
-                    accessKeyId: connection.username,
-                    secretAccessKey: password,
-                    region: connection.s3Region ?? "us-east-1",
-                    bucket: connection.s3Bucket ?? "",
-                    endpoint: connection.s3Endpoint
-                )
-                isConnected = true
-                currentPath = await s3Session.currentPath
-                navigationService.reset(to: currentPath)
-                AnalyticsService.trackFileBrowserOpened(protocol: .init(from: connection.connectionType))
-                await loadFiles()
-            } else {
-                // SFTP connection
-                guard let sftpSession = sftpSession else {
-                    throw AppError.notConnected
-                }
-                if connection.authMethod == .password {
-                    try await sftpSession.connect(
-                        host: connection.host,
-                        port: connection.port,
-                        username: connection.username,
-                        password: password
-                    )
-                } else if connection.authMethod == .privateKey {
-                    guard let sshKeyId = connection.sshKeyId else {
-                        throw AppError.connectionFailed("No SSH key selected for this connection. Please edit the connection and select an SSH key.")
-                    }
-                    guard let keyContent = try SSHKeyStorageService.shared.getPrivateKeyContent(for: sshKeyId), !keyContent.isEmpty else {
-                        throw AppError.connectionFailed("SSH key was not found in Keychain. Please edit the connection and re-select or import an SSH key.")
-                    }
-                    try await sftpSession.connect(
-                        host: connection.host,
-                        port: connection.port,
-                        username: connection.username,
-                        privateKeyContent: keyContent,
-                        passphrase: password.isEmpty ? nil : password
-                    )
-                }
-                isConnected = true
-                currentPath = await sftpSession.currentPath
-                navigationService.reset(to: currentPath)
-                AnalyticsService.trackFileBrowserOpened(protocol: .init(from: connection.connectionType))
-                await loadFiles()
-            }
+            currentPath = try await session.connect(initialPath: currentPath)
+            isConnected = true
+            navigationService.reset(to: currentPath)
+            AnalyticsService.trackFileBrowserOpened(protocol: .init(from: connection.connectionType))
+            await loadFiles()
         } catch {
-            logError("Connection failed: \(error)", category: connection.connectionType == .s3 ? .s3 : .sftp)
+            logError("Connection failed: \(error)", category: session.logCategory)
             state = .error(AppError.from(error))
         }
     }
 
     func disconnect() async {
-        if isLocal {
-            isConnected = false
-            files = []
-            navigationService.reset()
-            return
-        }
-        if connection.connectionType == .s3 {
-            await s3Session?.disconnect()
-        } else {
-            await sftpSession?.disconnect()
-        }
+        await session.disconnect()
+        quickLookController.reset()
         isConnected = false
         files = []
-        currentPath = "/"
+        if !isLocal {
+            currentPath = "/"
+        }
         navigationService.reset()
     }
 
@@ -370,21 +286,16 @@ final class FileBrowserViewModel {
         do {
             files = try await fileRepository.listFiles(at: currentPath)
             if !isLocal {
-                if connection.connectionType == .s3 {
-                    currentPath = await s3Session?.currentPath ?? "/"
-                } else {
-                    currentPath = await sftpSession?.currentPath ?? "/"
-                }
+                currentPath = await session.resolveCurrentPath(afterListing: currentPath, fallback: "/")
             }
             state = .success(())
         } catch {
-            logError("Failed to load files: \(error)", category: connection.connectionType == .s3 ? .s3 : .sftp)
+            logError("Failed to load files: \(error)", category: session.logCategory)
             state = .error(AppError.from(error))
         }
     }
 
-    /// Fetches the contents of a folder at `path` without changing navigation
-    /// state. Used by the outline view for lazy child-node loading.
+    /// Fetches the contents of a folder at `path` without changing navigation state.
     func listChildFiles(at path: String) async throws -> [RemoteFile] {
         try await fileRepository.listFiles(at: path)
     }
@@ -394,32 +305,23 @@ final class FileBrowserViewModel {
 
         do {
             logInfo("Navigating to: \(path) (history: \(addToHistory))", category: .ui)
-            
+
             let newFiles = try await fileRepository.listFiles(at: path)
-            
-            let newPath: String
-            if isLocal {
-                newPath = (path as NSString).expandingTildeInPath
-            } else if connection.connectionType == .s3 {
-                newPath = await s3Session?.currentPath ?? "/"
-            } else {
-                newPath = await sftpSession?.currentPath ?? "/"
-            }
-            
-            // Update state atomically on MainActor
+            let newPath = await session.resolveCurrentPath(afterListing: path, fallback: "/")
+
             self.files = newFiles
             self.currentPath = newPath
-            
+
             if addToHistory {
                 navigationService.navigate(to: newPath)
             }
-            
+
             self.selectedFiles.removeAll()
             self.state = .success(())
-            
+
             logInfo("Successfully navigated to: \(newPath)", category: .ui)
         } catch {
-            logError("Failed to navigate to \(path): \(error)", category: connection.connectionType == .s3 ? .s3 : .sftp)
+            logError("Failed to navigate to \(path): \(error)", category: session.logCategory)
             state = .error(AppError.from(error))
         }
     }
@@ -449,35 +351,11 @@ final class FileBrowserViewModel {
     }
 
     func goHome() async {
-        if isLocal {
-            await navigateTo(LocalFileRepository.userHomeDirectory)
-        } else {
-            await navigateTo("~")
-        }
+        await navigateTo(session.homePath())
     }
 
     func refresh() async {
         await loadFiles(showLoading: false)
-    }
-
-    private func navigateWithoutHistory(to path: String) async {
-        state = .loading
-
-        do {
-            files = try await fileRepository.listFiles(at: path)
-            if isLocal {
-                currentPath = (path as NSString).expandingTildeInPath
-            } else if connection.connectionType == .s3 {
-                currentPath = await s3Session?.currentPath ?? "/"
-            } else {
-                currentPath = await sftpSession?.currentPath ?? "/"
-            }
-            selectedFiles.removeAll()
-            state = .success(())
-        } catch {
-            logError("Failed to navigate to \(path): \(error)", category: connection.connectionType == .s3 ? .s3 : .sftp)
-            state = .error(AppError.from(error))
-        }
     }
 
     // MARK: - File Operations
@@ -491,7 +369,7 @@ final class FileBrowserViewModel {
             AnalyticsService.trackFileOperation(.createFolder, protocol: .init(from: connection.connectionType))
             await loadFiles()
         } catch {
-            logError("Failed to create folder: \(error)", category: .sftp)
+            logError("Failed to create folder: \(error)", category: session.logCategory)
             self.error = AppError.from(error)
         }
     }
@@ -504,7 +382,7 @@ final class FileBrowserViewModel {
             isShowingNewFileSheet = false
             await loadFiles()
         } catch {
-            logError("Failed to create file: \(error)", category: .sftp)
+            logError("Failed to create file: \(error)", category: session.logCategory)
             self.error = AppError.from(error)
         }
     }
@@ -519,7 +397,7 @@ final class FileBrowserViewModel {
             AnalyticsService.trackFileOperation(.rename, protocol: .init(from: connection.connectionType))
             await loadFiles()
         } catch {
-            logError("Failed to rename file: \(error)", category: .sftp)
+            logError("Failed to rename file: \(error)", category: session.logCategory)
             self.error = AppError.from(error)
         }
     }
@@ -538,7 +416,7 @@ final class FileBrowserViewModel {
         do {
             try await Self.executeDelete(files: files, repository: repository)
         } catch {
-            logError("Failed to delete files: \(error)", category: .sftp)
+            logError("Failed to delete files: \(error)", category: session.logCategory)
             self.error = AppError.from(error)
             return
         }
@@ -595,17 +473,11 @@ final class FileBrowserViewModel {
     }
 
     func s3ObjectURL(for file: RemoteFile) async throws -> URL {
-        guard connection.connectionType == .s3, let s3Session else {
-            throw AppError.notConnected
-        }
-        return try await s3Session.publicURL(for: file.path)
+        try await session.s3ObjectURL(for: file.path)
     }
 
     func s3PresignedURL(for file: RemoteFile, expiresIn: TimeInterval = 600) async throws -> URL {
-        guard connection.connectionType == .s3, let s3Session else {
-            throw AppError.notConnected
-        }
-        return try await s3Session.presignedURL(for: file.path, expiresIn: expiresIn)
+        try await session.s3PresignedURL(for: file.path, expiresIn: expiresIn)
     }
 
     nonisolated private static func executePaste(
@@ -644,7 +516,7 @@ final class FileBrowserViewModel {
                 repository: repository
             )
         } catch {
-            logError("Failed to paste: \(error)", category: .sftp)
+            logError("Failed to paste: \(error)", category: session.logCategory)
             self.error = AppError.from(error)
             return
         }
@@ -662,7 +534,7 @@ final class FileBrowserViewModel {
         pasteboard.setString(value, forType: .string)
     }
 
-    // MARK: - Download/Upload
+    // MARK: - Download / Upload
 
     func downloadFile(_ file: RemoteFile) async {
         let panel = NSSavePanel()
@@ -671,88 +543,15 @@ final class FileBrowserViewModel {
 
         guard panel.runModal() == .OK, let url = panel.url else { return }
 
-        let transferId = UUID()
-        let transfer = TransferProgress(
-            id: transferId,
-            fileName: file.name,
-            localURL: url,
-            remotePath: file.path,
-            bytesTransferred: 0,
-            totalBytes: file.size,
-            transferType: .download,
-            status: .inProgress
-        )
-        activeTransfers[transferId] = transfer
-        isShowingTransfersPopover = true
-
-        let throttler = SingleTransferThrottler(interval: 0.1)
-
-        let downloadTask = Task { [weak self] in
-            guard let self = self else { return }
-
-            do {
-                try Task.checkCancellation()
-
-                try await self.fileRepository.download(remotePath: file.path, to: url) { [weak self] bytesTransferred in
-                    guard let self else { return }
-                    if throttler.shouldUpdate() {
-                        Task { @MainActor in
-                            guard self.activeTransfers[transferId] != nil else { return }
-                            self.activeTransfers[transferId]?.bytesTransferred = bytesTransferred
-                        }
-                    }
-                }
-
-                try Task.checkCancellation()
-
-                await MainActor.run {
-                    if var completedTransfer = self.activeTransfers.removeValue(forKey: transferId) {
-                        completedTransfer.status = .completed
-                        completedTransfer.bytesTransferred = file.size
-                        self.recentTransfers.insert(completedTransfer, at: 0)
-                        if self.recentTransfers.count > 10 {
-                            self.recentTransfers = Array(self.recentTransfers.prefix(10))
-                        }
-                    }
-                    self.transferTasks.removeValue(forKey: transferId)
-                }
-
-                AnalyticsService.trackFileDownloaded(protocol: .init(from: self.connection.connectionType), fileCount: 1, totalBytes: file.size)
-                logInfo("Downloaded: \(file.name)", category: self.connection.connectionType == .s3 ? .s3 : .sftp)
-
-            } catch {
-                let isCancellation = error is CancellationError ||
-                    Task.isCancelled ||
-                    String(describing: error).contains("CancellationError")
-
-                if isCancellation {
-                    await MainActor.run {
-                        if var cancelledTransfer = self.activeTransfers.removeValue(forKey: transferId) {
-                            cancelledTransfer.status = .cancelled
-                            self.recentTransfers.insert(cancelledTransfer, at: 0)
-                        }
-                        self.transferTasks.removeValue(forKey: transferId)
-                    }
-                    logInfo("Download cancelled: \(file.name)", category: self.connection.connectionType == .s3 ? .s3 : .sftp)
-                } else {
-                    await MainActor.run {
-                        if var failedTransfer = self.activeTransfers.removeValue(forKey: transferId) {
-                            failedTransfer.status = .failed
-                            failedTransfer.error = error.localizedDescription
-                            self.recentTransfers.insert(failedTransfer, at: 0)
-                        }
-                        self.transferTasks.removeValue(forKey: transferId)
-                    }
-
-                    logError("Download failed: \(error)", category: self.connection.connectionType == .s3 ? .s3 : .sftp)
-                    await MainActor.run {
-                        self.error = AppError.from(error)
-                    }
-                }
-            }
+        transferManager.startDownload(
+            file: file,
+            to: url,
+            repository: fileRepository,
+            connectionType: connection.connectionType,
+            logCategory: session.logCategory
+        ) { [weak self] appError in
+            self?.error = appError
         }
-
-        transferTasks[transferId] = downloadTask
     }
 
     func uploadFiles() async {
@@ -766,43 +565,31 @@ final class FileBrowserViewModel {
         await uploadURLs(panel.urls)
     }
 
-    // MARK: - Batch Upload Handling
-
-    private var isBatchInProgress = false
-    private(set) var lastFailedUploadItems: [TransferQueueItem] = []
-
     /// Retries failed transfers from the previous batch without re-uploading succeeded files
     func retryFailedTransfers() async {
-        guard !lastFailedUploadItems.isEmpty, !isBatchInProgress else { return }
+        guard !lastFailedUploadItems.isEmpty, !transferManager.isBatchInProgress else { return }
         let itemsToRetry = lastFailedUploadItems
+        guard transferManager.beginBatchSession() else { return }
+        defer { transferManager.endBatchSession() }
         await executeUploadBatch(items: itemsToRetry, directoriesToCreate: [], topLevelNames: [])
     }
 
-    /// Core upload method that handles multiple files and directories with streaming discovery and bounded memory
     private func uploadURLs(_ urls: [URL]) async {
-        guard !isBatchInProgress else {
-            logInfo("Upload batch already in progress, skipping concurrent request", category: .app)
+        guard transferManager.beginBatchSession() else {
+            logWarning("Upload batch already in progress, ignoring concurrent request", category: .app)
+            self.error = .uploadFailed("A transfer batch is already in progress. Please wait for it to finish or cancel it first.")
             return
         }
-        isBatchInProgress = true
-        defer { isBatchInProgress = false }
+        defer { transferManager.endBatchSession() }
 
-        self.isBatchCancelled = false
-        self.lastAppliedSnapshotSequence = 0
-
-        let currentPath = self.currentPath
+        let targetPath = self.currentPath
         var directoriesToCreate: [String] = []
         var filesToUpload: [TransferQueueItem] = []
         var topLevelDirectoryNames: [String] = []
 
-        if !isShowingTransfersPopover {
-            isShowingTransfersPopover = true
-        }
-
-        // Stream local filesystem enumeration with bounded memory
-        let stream = StreamingFileScanner.streamLocalURLs(urls, targetRemotePath: currentPath, bufferSize: 100)
+        let stream = StreamingFileScanner.streamLocalURLs(urls, targetRemotePath: targetPath, bufferSize: 100)
         for await event in stream {
-            if Task.isCancelled || isBatchCancelled { break }
+            if Task.isCancelled || transferManager.isCurrentBatchCancelled { break }
             switch event {
             case .topLevelFolder(let folder):
                 topLevelDirectoryNames.append(folder.name)
@@ -818,8 +605,7 @@ final class FileBrowserViewModel {
 
         guard !filesToUpload.isEmpty else {
             if !directoriesToCreate.isEmpty {
-                let repository = self.fileRepository
-                let dirMgr = RemoteDirectoryManager(repository: repository, maxConcurrency: 3)
+                let dirMgr = RemoteDirectoryManager(repository: fileRepository, maxConcurrency: 3)
                 _ = await dirMgr.createDirectories(directoriesToCreate)
             }
             return
@@ -837,83 +623,46 @@ final class FileBrowserViewModel {
         directoriesToCreate: [String],
         topLevelNames: [String] = []
     ) async {
-        let totalFilesCount = items.count
-        let totalBytesSum = items.reduce(0) { $0 + $1.fileSize }
-        let batchId = UUID()
-
         let title: String
-        if !topLevelNames.isEmpty {
-            title = topLevelNames.count == 1
-                ? "Uploading \"\(topLevelNames[0])\""
-                : "Uploading \(totalFilesCount) files"
+        if topLevelNames.count == 1 {
+            title = "Uploading \"\(topLevelNames[0])\""
         } else {
-            title = "Uploading \(totalFilesCount) files"
+            title = "Uploading \(items.count) files"
         }
 
-        self.activeBatch = BatchTransferProgress(
-            id: batchId,
-            title: title,
-            totalFiles: totalFilesCount,
-            totalBytes: totalBytesSum,
-            status: .inProgress
-        )
-
-        let tracker = BatchProgressTracker(
-            batchId: batchId,
-            totalFiles: totalFilesCount,
-            totalBytes: totalBytesSum,
-            initialRecent: recentTransfers
-        )
-        self.currentBatchTracker = tracker
-
-        let maxConcurrent = TransferSettings.shared.maxConcurrentTransfers
         let repository = self.fileRepository
         let connectionType = self.connection.connectionType
 
-        let onUpdate: @Sendable (BatchProgressSnapshot) -> Void = { [weak self] snapshot in
-            Task { @MainActor [weak self] in
-                self?.applyBatchSnapshot(snapshot)
-            }
-        }
-
-        let result = await BatchTransferCoordinator.shared.executeBatch(
+        let result = await transferManager.executeBatch(
+            title: title,
             items: items,
             directoriesToCreate: directoriesToCreate,
             repository: repository,
-            maxConcurrent: maxConcurrent,
-            retryPolicy: .default,
-            tracker: tracker,
+            transferType: .upload,
             executor: { item, progress in
                 guard let localURL = item.localURL else {
                     throw AppError.fileNotFound
                 }
                 try await repository.upload(localURL: localURL, to: item.remotePath, progress: progress)
 
-                var destRemoteFile: RemoteFile? = nil
-                if item.isTopLevel {
-                    destRemoteFile = RemoteFile(
-                        name: item.displayName,
-                        path: item.remotePath,
-                        isDirectory: false,
-                        size: item.fileSize,
-                        permissions: "-rw-r--r--",
-                        modificationDate: Date()
-                    )
-                }
-                return destRemoteFile
+                guard item.isTopLevel else { return nil }
+                return RemoteFile(
+                    name: item.displayName,
+                    path: item.remotePath,
+                    isDirectory: false,
+                    size: item.fileSize,
+                    permissions: "-rw-r--r--",
+                    modificationDate: Date()
+                )
             },
-            onUpdate: onUpdate,
+            onSnapshot: { [weak self] snapshot in
+                self?.applyBatchSnapshot(snapshot)
+            },
             onError: { [weak self] appError in
-                Task { @MainActor [weak self] in
-                    self?.error = appError
-                }
+                self?.error = appError
             }
         )
 
-        self.lastFailedUploadItems = result.failedItems
-        self.currentBatchTracker = nil
-
-        // Atomically record aggregated batch analytics
         AnalyticsService.trackBatchTransferred(
             protocol: .init(from: connectionType),
             fileCount: result.completedFiles,
@@ -928,39 +677,7 @@ final class FileBrowserViewModel {
 
     /// Applies an atomic throttled snapshot from BatchProgressTracker to the UI state
     func applyBatchSnapshot(_ snapshot: BatchProgressSnapshot) {
-        // Discard snapshots from an older/different batch
-        if let batch = self.activeBatch, batch.id != snapshot.batchId {
-            return
-        }
-        // Discard out-of-order snapshots
-        guard snapshot.sequence > self.lastAppliedSnapshotSequence else {
-            return
-        }
-        self.lastAppliedSnapshotSequence = snapshot.sequence
-
-        self.activeTransfers = snapshot.activeTransfers
-        self.recentTransfers = snapshot.recentTransfers
-
-        if var batch = self.activeBatch {
-            batch.completedFiles = snapshot.completedFiles
-            batch.failedFiles = snapshot.failedFiles
-            batch.cancelledFiles = snapshot.cancelledFiles
-            batch.queuedFiles = snapshot.queuedFiles
-            batch.completedBytes = snapshot.completedBytes
-            batch.transferredBytes = snapshot.transferredBytes
-            batch.failedTransfers = snapshot.failedTransfers
-            batch.directoryErrors = snapshot.directoryErrors
-            if snapshot.isFinal {
-                if self.isBatchCancelled || (snapshot.cancelledFiles > 0 && snapshot.completedFiles == 0 && snapshot.failedFiles == 0) {
-                    batch.status = .cancelled
-                } else if snapshot.failedFiles > 0 || !snapshot.failedTransfers.isEmpty || !snapshot.directoryErrors.isEmpty {
-                    batch.status = .failed
-                } else {
-                    batch.status = .completed
-                }
-            }
-            self.activeBatch = batch
-        }
+        guard transferManager.applyBatchSnapshot(snapshot) else { return }
 
         if !snapshot.topLevelFiles.isEmpty {
             var updatedFiles = self.files
@@ -983,169 +700,44 @@ final class FileBrowserViewModel {
         }
     }
 
-    /// Cancels the entire active batch and all active file transfers
-    func cancelBatch() {
-        isBatchCancelled = true
-        activeBatch?.status = .cancelled
-        currentBatchTracker?.cancelAll()
-        cancelAllTransfers()
+    func cancelBatch() { transferManager.cancelBatch() }
+    func cancelTransfer(_ transfer: TransferProgress) { transferManager.cancelTransfer(transfer) }
+    func cancelAllTransfers() { transferManager.cancelAllTransfers() }
+    func clearCompletedTransfers() { transferManager.clearCompletedTransfers() }
+    func removeTransfer(_ transfer: TransferProgress) { transferManager.removeTransfer(transfer) }
+
+    func trackTransfer(_ transfer: TransferProgress, task: Task<Void, Never>? = nil) {
+        transferManager.trackTransfer(transfer, task: task)
     }
 
-    /// Cancels an active transfer
-    func cancelTransfer(_ transfer: TransferProgress) {
-        guard transfer.isInProgress else { return }
-        currentBatchTracker?.cancelTransfer(id: transfer.id)
-
-        // Cancel the task
-        if let task = transferTasks[transfer.id] {
-            task.cancel()
-        }
-
-        // Immediately update UI to show cancelled state
-        if var cancelledTransfer = activeTransfers.removeValue(forKey: transfer.id) {
-            cancelledTransfer.status = .cancelled
-            recentTransfers.insert(cancelledTransfer, at: 0)
-            if recentTransfers.count > 30 {
-                recentTransfers = Array(recentTransfers.prefix(30))
-            }
-        }
-        transferTasks.removeValue(forKey: transfer.id)
+    func updateTransferProgress(id: UUID, bytesTransferred: Int64) {
+        transferManager.updateTransferProgress(id: id, bytesTransferred: bytesTransferred)
     }
 
-    /// Cancels all active transfers
-    func cancelAllTransfers() {
-        isBatchCancelled = true
-        activeBatch?.status = .cancelled
-        currentBatchTracker?.cancelAll()
-        for (id, task) in transferTasks {
-            task.cancel()
-            if var cancelledTransfer = activeTransfers.removeValue(forKey: id) {
-                cancelledTransfer.status = .cancelled
-                recentTransfers.insert(cancelledTransfer, at: 0)
-            }
-        }
-        for (_, var cancelledTransfer) in activeTransfers {
-            cancelledTransfer.status = .cancelled
-            recentTransfers.insert(cancelledTransfer, at: 0)
-        }
-        activeTransfers.removeAll()
-        if recentTransfers.count > 30 {
-            recentTransfers = Array(recentTransfers.prefix(30))
-        }
-        transferTasks.removeAll()
+    func completeTransfer(id: UUID, totalBytes: Int64) {
+        transferManager.completeTransfer(id: id, totalBytes: totalBytes)
+    }
+
+    func failTransfer(id: UUID, error: Error?, isCancelled: Bool) {
+        transferManager.failTransfer(id: id, error: error, isCancelled: isCancelled)
     }
 
     // MARK: - Drag and Drop
 
     /// Downloads a file to a specific URL (used for drag-out file promises)
     func downloadFileToURL(_ file: RemoteFile, destinationURL: URL) async throws {
-        let transferId = UUID()
-        let transfer = TransferProgress(
-            id: transferId,
-            fileName: file.name,
-            localURL: destinationURL,
-            remotePath: file.path,
-            bytesTransferred: 0,
-            totalBytes: file.size,
-            transferType: .download,
-            status: .inProgress
+        try await transferManager.downloadToURL(
+            file: file,
+            destinationURL: destinationURL,
+            repository: fileRepository,
+            connectionType: connection.connectionType,
+            logCategory: session.logCategory
         )
-        activeTransfers[transferId] = transfer
-        isShowingTransfersPopover = true
-
-        let throttler = SingleTransferThrottler(interval: 0.1)
-
-        do {
-            try await fileRepository.download(remotePath: file.path, to: destinationURL) { [weak self] bytesTransferred in
-                guard let self else { return }
-                if throttler.shouldUpdate() {
-                    Task { @MainActor in
-                        guard self.activeTransfers[transferId] != nil else { return }
-                        self.activeTransfers[transferId]?.bytesTransferred = bytesTransferred
-                    }
-                }
-            }
-
-            if var completedTransfer = activeTransfers.removeValue(forKey: transferId) {
-                completedTransfer.status = .completed
-                completedTransfer.bytesTransferred = file.size
-                recentTransfers.insert(completedTransfer, at: 0)
-                if recentTransfers.count > 10 {
-                    recentTransfers = Array(recentTransfers.prefix(10))
-                }
-            }
-
-            AnalyticsService.trackFileDownloaded(protocol: .init(from: connection.connectionType), fileCount: 1, totalBytes: file.size)
-            logInfo("Downloaded via drag: \(file.name)", category: connection.connectionType == .s3 ? .s3 : .sftp)
-        } catch {
-            if var failedTransfer = activeTransfers.removeValue(forKey: transferId) {
-                failedTransfer.status = .failed
-                failedTransfer.error = error.localizedDescription
-                recentTransfers.insert(failedTransfer, at: 0)
-            }
-            throw error
-        }
     }
 
     /// Uploads files dropped from Finder into the current directory
     func uploadDroppedFiles(_ urls: [URL]) async {
         await uploadURLs(urls)
-    }
-
-    /// Clears completed/failed transfers from the list
-    func clearCompletedTransfers() {
-        currentBatchTracker?.clearCompleted()
-        recentTransfers.removeAll()
-        if activeBatch?.status == .completed || activeBatch?.status == .cancelled || activeBatch?.status == .failed {
-            activeBatch = nil
-        }
-    }
-
-    /// Removes a specific transfer from the recent list
-    func removeTransfer(_ transfer: TransferProgress) {
-        currentBatchTracker?.removeRecent(id: transfer.id)
-        recentTransfers.removeAll { $0.id == transfer.id }
-    }
-
-    /// Registers a transfer and optionally its Task for tracking and cancellation
-    func trackTransfer(_ transfer: TransferProgress, task: Task<Void, Never>? = nil) {
-        activeTransfers[transfer.id] = transfer
-        if let task = task {
-            transferTasks[transfer.id] = task
-        }
-        isShowingTransfersPopover = true
-    }
-
-    /// Updates bytes transferred for an active transfer
-    func updateTransferProgress(id: UUID, bytesTransferred: Int64) {
-        guard activeTransfers[id] != nil else { return }
-        activeTransfers[id]?.bytesTransferred = bytesTransferred
-    }
-
-    /// Marks a transfer as completed and moves it to recent transfers
-    func completeTransfer(id: UUID, totalBytes: Int64) {
-        if var completedTransfer = activeTransfers.removeValue(forKey: id) {
-            completedTransfer.status = .completed
-            completedTransfer.bytesTransferred = totalBytes
-            recentTransfers.insert(completedTransfer, at: 0)
-            if recentTransfers.count > 30 {
-                recentTransfers = Array(recentTransfers.prefix(30))
-            }
-        }
-        transferTasks.removeValue(forKey: id)
-    }
-
-    /// Marks a transfer as failed or cancelled
-    func failTransfer(id: UUID, error: Error?, isCancelled: Bool) {
-        if var transfer = activeTransfers.removeValue(forKey: id) {
-            transfer.status = isCancelled ? .cancelled : .failed
-            transfer.error = isCancelled ? nil : error?.localizedDescription
-            recentTransfers.insert(transfer, at: 0)
-            if recentTransfers.count > 30 {
-                recentTransfers = Array(recentTransfers.prefix(30))
-            }
-        }
-        transferTasks.removeValue(forKey: id)
     }
 
     // MARK: - File Content
@@ -1197,7 +789,7 @@ final class FileBrowserViewModel {
             file: file,
             connectionName: connection.name
         )
-        let windowId = WindowManager.shared.storeFileInfoData(data)
+        let windowId = windowManager.storeFileInfoData(data)
         pendingFileInfoWindowId = windowId
         AnalyticsService.track(.fileInfoOpened)
     }
@@ -1223,7 +815,7 @@ final class FileBrowserViewModel {
             s3Bucket: connection.s3Bucket,
             s3Endpoint: connection.s3Endpoint
         )
-        let windowId = WindowManager.shared.storeFileEditorData(data)
+        let windowId = windowManager.storeFileEditorData(data)
         pendingEditorWindowId = windowId
         AnalyticsService.trackEditorOpened(fileExtension: (file.name as NSString).pathExtension)
     }
@@ -1239,107 +831,15 @@ final class FileBrowserViewModel {
     // MARK: - Quick Look
 
     func toggleQuickLook() {
-        if isShowingQuickLook {
-            isShowingQuickLook = false
-            quickLookTask?.cancel()
-        } else {
-            if let file = primarySelectedFile {
-                showQuickLook(for: file)
-            }
-        }
+        quickLookController.toggle(for: primarySelectedFile)
     }
 
-    /// Opens the Quick Look panel for a specific file.
     func showQuickLook(for file: RemoteFile) {
-        isShowingQuickLook = true
-
-        // If already showing this file, no-op
-        if quickLookFile?.id == file.id { return }
-
-        quickLookFile = file
-        quickLookTask?.cancel()
-
-        // Check cache first
-        if let cached = quickLookCache[file.path] {
-            quickLookContent = cached
-            return
-        }
-
-        quickLookContent = .loading
-        quickLookTask = Task { @MainActor in
-            await loadQuickLookContent(for: file)
-        }
+        quickLookController.show(for: file)
     }
 
-    /// Loads content for the given file and caches the result.
-    private func loadQuickLookContent(for file: RemoteFile) async {
-        // Directories and large files → metadata only
-        if file.isDirectory || file.size > FileOperationConstants.maxFilePreviewSize {
-            let result = QuickLookContent.unsupported
-            quickLookCache[file.path] = result
-            if quickLookFile?.id == file.id {
-                quickLookContent = result
-            }
-            return
-        }
-
-        let fileType = file.fileType
-        do {
-            switch fileType {
-            case .image:
-                // Download to a temp location then read Data
-                let tempURL = FileManager.default.temporaryDirectory
-                    .appendingPathComponent(UUID().uuidString + "_" + file.name)
-                try await fileRepository.download(remotePath: file.path, to: tempURL) { _ in }
-                let data = try Data(contentsOf: tempURL)
-                try? FileManager.default.removeItem(at: tempURL)
-                let result = QuickLookContent.image(data)
-                quickLookCache[file.path] = result
-                if !Task.isCancelled, quickLookFile?.id == file.id {
-                    quickLookContent = result
-                }
-
-            case .pdf:
-                let tempURL = FileManager.default.temporaryDirectory
-                    .appendingPathComponent(UUID().uuidString + "_" + file.name)
-                try await fileRepository.download(remotePath: file.path, to: tempURL) { _ in }
-                let data = try Data(contentsOf: tempURL)
-                try? FileManager.default.removeItem(at: tempURL)
-                let result = QuickLookContent.pdf(data)
-                quickLookCache[file.path] = result
-                if !Task.isCancelled, quickLookFile?.id == file.id {
-                    quickLookContent = result
-                }
-
-            case .text, .code, .configuration:
-                let content = try await fileRepository.readFileContent(at: file.path)
-                let result = QuickLookContent.text(content)
-                quickLookCache[file.path] = result
-                if !Task.isCancelled, quickLookFile?.id == file.id {
-                    quickLookContent = result
-                }
-
-            default:
-                let result = QuickLookContent.unsupported
-                quickLookCache[file.path] = result
-                if !Task.isCancelled, quickLookFile?.id == file.id {
-                    quickLookContent = result
-                }
-            }
-        } catch {
-            guard !Task.isCancelled else { return }
-            let result = QuickLookContent.error(error.localizedDescription)
-            quickLookCache[file.path] = result
-            if quickLookFile?.id == file.id {
-                quickLookContent = result
-            }
-        }
-    }
-
-    /// Closes the Quick Look panel.
     func closeQuickLook() {
-        isShowingQuickLook = false
-        quickLookTask?.cancel()
+        quickLookController.close()
     }
 }
 

@@ -87,5 +87,5 @@ Cho phép người dùng duyệt và thao tác đối tượng trên **Amazon S3
 
 ## 8. Known Gaps & Technical Debt
 - ~~**P0 — Force unwrap & Data race:** Force unwrap `s3!` ở `S3Session.swift:64,67` và `S3StreamReader` là `@unchecked Sendable` không lock~~ (Đã xử lý — 2026-11-26: dùng biến local `client` và chuyển `S3StreamReader` sang `actor`).
-- **P1 — God Object:** `S3Session.swift` dài 1,249 dòng, cần tách thành path/URL builder, transfer/multipart, và typed error mapper thay vì parse lỗi theo chuỗi `.lowercased()` (`docs/technical-debt.md#2.1`, `#3.3`).
-- **P2 — Logging overhead:** `S3Session.log(_:)` tạo `Task { @MainActor ... }` không cần thiết cho từng dòng log (`docs/technical-debt.md#3.3`).
+- ~~**P1 — God Object:** `S3Session.swift` dài 1,249 dòng~~ (Đã xử lý — 2026-11-26: tách `S3PathResolver`, `S3ErrorMapper`, và `S3Session+Transfers`).
+- ~~**P2 — Logging overhead:** `S3Session.log(_:)` tạo `Task { @MainActor ... }`~~ (Đã xử lý — 2026-11-26: gọi trực tiếp `logInfo(..., category: .s3)`).

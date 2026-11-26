@@ -12,6 +12,7 @@ enum LogCategory: String {
     case app = "App"
     case sftp = "SFTP"
     case s3 = "S3"
+    case local = "Local"
     case keychain = "Keychain"
     case database = "Database"
     case ui = "UI"
@@ -54,7 +55,7 @@ final class Logger: @unchecked Sendable {
         let sub = Bundle.main.bundleIdentifier ?? AppConstants.bundleIdentifier
         self.subsystem = sub
         var loggersDict: [LogCategory: os.Logger] = [:]
-        for category in [LogCategory.app, .sftp, .s3, .keychain, .database, .ui, .network, .auth] {
+        for category in [LogCategory.app, .sftp, .s3, .local, .keychain, .database, .ui, .network, .auth] {
             loggersDict[category] = os.Logger(subsystem: sub, category: category.rawValue)
         }
         self.loggers = loggersDict

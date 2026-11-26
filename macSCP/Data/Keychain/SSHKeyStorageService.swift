@@ -6,16 +6,24 @@
 //
 
 import Foundation
-import Security
 
 final class SSHKeyStorageService: SSHKeyRepositoryProtocol, @unchecked Sendable {
     static let shared = SSHKeyStorageService()
 
-    private let service = AppConstants.keychainSSHKeyService
-    private let metadataKey = "com.macSCP.sshKeyItems"
+    private let service: String
+    private let metadataKey: String
+    private let userDefaults: UserDefaults
     private let lock = NSLock()
 
-    private init() {}
+    internal init(
+        service: String = AppConstants.keychainSSHKeyService,
+        metadataKey: String = "com.macSCP.sshKeyItems",
+        userDefaults: UserDefaults = .standard
+    ) {
+        self.service = service
+        self.metadataKey = metadataKey
+        self.userDefaults = userDefaults
+    }
 
     // MARK: - Public API
 
@@ -35,19 +43,7 @@ final class SSHKeyStorageService: SSHKeyRepositoryProtocol, @unchecked Sendable 
         lock.lock()
         defer { lock.unlock() }
 
-        var query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: keyId.uuidString,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
-        ]
-
-        var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-
-        guard status == errSecSuccess,
-              let data = result as? Data,
+        guard let data = KeychainStore.read(service: service, account: keyId.uuidString),
               let keyString = String(data: data, encoding: .utf8) else {
             return nil
         }
@@ -69,41 +65,21 @@ final class SSHKeyStorageService: SSHKeyRepositoryProtocol, @unchecked Sendable 
         let meta = try SSHKeyParser.inspectKey(from: trimmed)
 
         let keyId = UUID()
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let item = SSHKeyItem(
             id: keyId,
-            name: name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? meta.keyType : name.trimmingCharacters(in: .whitespacesAndNewlines),
+            name: trimmedName.isEmpty ? meta.keyType : trimmedName,
             keyType: meta.keyType,
             fingerprint: meta.fingerprint,
             publicKeyString: meta.publicKeyString,
             createdAt: Date()
         )
 
-        // Save to Keychain
         guard let keyData = trimmed.data(using: .utf8) else {
             throw AppError.keychainSaveFailed
         }
 
-        // Delete any existing item for this id
-        let deleteQuery: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: keyId.uuidString
-        ]
-        SecItemDelete(deleteQuery as CFDictionary)
-
-        var addQuery: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: keyId.uuidString,
-            kSecValueData as String: keyData,
-            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlocked
-        ]
-
-        let status = SecItemAdd(addQuery as CFDictionary, nil)
-        guard status == errSecSuccess else {
-            logError("Failed to save SSH key to Keychain with status \(status)", category: .keychain)
-            throw AppError.keychainSaveFailed
-        }
+        try KeychainStore.save(keyData, service: service, account: keyId.uuidString)
 
         // Save metadata
         var currentItems = loadMetadata()
@@ -118,12 +94,7 @@ final class SSHKeyStorageService: SSHKeyRepositoryProtocol, @unchecked Sendable 
         lock.lock()
         defer { lock.unlock() }
 
-        let deleteQuery: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: id.uuidString
-        ]
-        SecItemDelete(deleteQuery as CFDictionary)
+        try KeychainStore.delete(service: service, account: id.uuidString)
 
         var currentItems = loadMetadata()
         currentItems.removeAll { $0.id == id }
@@ -135,7 +106,7 @@ final class SSHKeyStorageService: SSHKeyRepositoryProtocol, @unchecked Sendable 
     // MARK: - Private Helpers
 
     private func loadMetadata() -> [SSHKeyItem] {
-        guard let data = UserDefaults.standard.data(forKey: metadataKey),
+        guard let data = userDefaults.data(forKey: metadataKey),
               let items = try? JSONDecoder().decode([SSHKeyItem].self, from: data) else {
             return []
         }
@@ -144,6 +115,6 @@ final class SSHKeyStorageService: SSHKeyRepositoryProtocol, @unchecked Sendable 
 
     private func saveMetadata(_ items: [SSHKeyItem]) {
         guard let data = try? JSONEncoder().encode(items) else { return }
-        UserDefaults.standard.set(data, forKey: metadataKey)
+        userDefaults.set(data, forKey: metadataKey)
     }
 }

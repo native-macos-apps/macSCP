@@ -105,4 +105,4 @@ Cho phép người dùng tạo, lưu trữ, phân loại, tìm kiếm và kết 
 ---
 
 ## 8. Known Gaps & Technical Debt
-- `KeychainService.swift` đang trùng lặp boilerplate CRUD giữa Password và S3 Credentials (`docs/technical-debt.md#3.1`).
+- ~~`KeychainService.swift` đang trùng lặp boilerplate CRUD giữa Password và S3 Credentials~~ (Đã xử lý — 2026-11-26: gom vào `KeychainStore` dùng chung với `SSHKeyStorageService`).

@@ -93,10 +93,14 @@ final class CommanderViewModel {
     // MARK: - Sheets & Prompts
     var isShowingPasswordPrompt: Bool = false
     var isShowingNewConnectionSheet: Bool = false
-    var isShowingTransfersPopover: Bool = false
-    var activeBatch: BatchTransferProgress?
-    private var isBatchCancelled: Bool = false
-    private var currentBatchTracker: BatchProgressTracker?
+    var isShowingTransfersPopover: Bool {
+        get { transferManager.isShowingTransfersPopover }
+        set { transferManager.isShowingTransfersPopover = newValue }
+    }
+    var activeBatch: BatchTransferProgress? {
+        get { transferManager.activeBatch }
+        set { transferManager.activeBatch = newValue }
+    }
     var pendingConnection: Connection?
     var pendingPanePosition: PanePosition?
     private var pendingTerminalInitialPath: String?
@@ -109,6 +113,7 @@ final class CommanderViewModel {
 
     // MARK: - Dependencies
     private let dependencyContainer: DependencyContainer
+    private let transferManager: FileTransferManager
     var connectionListViewModel: ConnectionListViewModel
 
     // MARK: - Computed Properties
@@ -184,24 +189,19 @@ final class CommanderViewModel {
     }
 
     func cancelBatch() {
-        isBatchCancelled = true
-        activeBatch?.status = .cancelled
-        currentBatchTracker?.cancelAll()
+        transferManager.cancelBatch()
         leftPane.browserViewModel?.cancelBatch()
         rightPane.browserViewModel?.cancelBatch()
     }
 
     func clearCompletedTransfers() {
-        currentBatchTracker?.clearCompleted()
-        if activeBatch?.status == .completed || activeBatch?.status == .cancelled || activeBatch?.status == .failed {
-            activeBatch = nil
-        }
+        transferManager.clearCompletedTransfers()
         leftPane.browserViewModel?.clearCompletedTransfers()
         rightPane.browserViewModel?.clearCompletedTransfers()
     }
 
     func removeTransfer(_ transfer: TransferProgress) {
-        currentBatchTracker?.removeRecent(id: transfer.id)
+        transferManager.removeTransfer(transfer)
         leftPane.browserViewModel?.removeTransfer(transfer)
         rightPane.browserViewModel?.removeTransfer(transfer)
     }
@@ -210,6 +210,10 @@ final class CommanderViewModel {
 
     init(container: DependencyContainer) {
         self.dependencyContainer = container
+        self.transferManager = FileTransferManager(
+            coordinator: container.batchTransferCoordinator,
+            transferSettings: container.transferSettings
+        )
         self.connectionListViewModel = container.makeConnectionListViewModel()
 
         // Initialize Left pane as Local
@@ -300,7 +304,7 @@ final class CommanderViewModel {
 
     func connect(to connection: Connection, in position: PanePosition) {
         Task { @MainActor in
-            let allowed = await AppLockManager.shared.authenticateForConnection()
+            let allowed = await dependencyContainer.appLockManager.authenticateForConnection()
             guard allowed else {
                 logInfo("Connection cancelled: biometric auth denied", category: .auth)
                 return
@@ -415,16 +419,17 @@ final class CommanderViewModel {
 
     // MARK: - Batch Transfer Handling
 
-    private var isBatchInProgress = false
-    private(set) var lastFailedCommanderItems: [TransferQueueItem] = []
+    var lastFailedCommanderItems: [TransferQueueItem] { transferManager.lastFailedItems }
     private weak var lastSourceVM: FileBrowserViewModel?
     private weak var lastTargetVM: FileBrowserViewModel?
 
     /// Retries failed transfers from the previous commander batch
     func retryFailedTransfers() async {
-        guard !lastFailedCommanderItems.isEmpty, !isBatchInProgress,
+        guard !lastFailedCommanderItems.isEmpty, !transferManager.isBatchInProgress,
               let sourceVM = lastSourceVM, let targetVM = lastTargetVM else { return }
         let itemsToRetry = lastFailedCommanderItems
+        guard transferManager.beginBatchSession() else { return }
+        defer { transferManager.endBatchSession() }
         await executeCommanderBatch(
             items: itemsToRetry,
             directoriesToCreate: [],
@@ -439,17 +444,15 @@ final class CommanderViewModel {
         from sourceVM: FileBrowserViewModel,
         to targetVM: FileBrowserViewModel
     ) async {
-        guard !isBatchInProgress else {
-            logInfo("Commander batch already in progress, skipping concurrent request", category: .app)
+        guard transferManager.beginBatchSession() else {
+            logWarning("Commander batch already in progress, ignoring concurrent request", category: .app)
+            self.error = .uploadFailed("A transfer batch is already in progress. Please wait for it to finish or cancel it first.")
             return
         }
-        isBatchInProgress = true
-        defer { isBatchInProgress = false }
+        defer { transferManager.endBatchSession() }
 
         self.lastSourceVM = sourceVM
         self.lastTargetVM = targetVM
-        self.isShowingTransfersPopover = true
-        self.isBatchCancelled = false
 
         let targetBasePath = targetVM.currentPath
         let sourceRepo = sourceVM.fileRepository
@@ -467,7 +470,7 @@ final class CommanderViewModel {
         )
 
         for await event in stream {
-            if Task.isCancelled || isBatchCancelled { break }
+            if Task.isCancelled || transferManager.isCurrentBatchCancelled { break }
             switch event {
             case .topLevelFolder(let folder):
                 topLevelDirectoryNames.append(folder.name)
@@ -505,59 +508,24 @@ final class CommanderViewModel {
         sourceVM: FileBrowserViewModel,
         targetVM: FileBrowserViewModel
     ) async {
-        let totalFilesCount = items.count
-        let totalBytesSum = items.reduce(0) { $0 + $1.fileSize }
-        let batchId = UUID()
-        let initialRecent = targetVM.recentTransfers
-
         let title: String
-        if !topLevelNames.isEmpty {
-            title = topLevelNames.count == 1
-                ? "Transferring \"\(topLevelNames[0])\""
-                : "Transferring \(totalFilesCount) files"
+        if topLevelNames.count == 1 {
+            title = "Transferring \"\(topLevelNames[0])\""
         } else {
-            title = "Transferring \(totalFilesCount) files"
+            title = "Transferring \(items.count) files"
         }
 
-        self.activeBatch = BatchTransferProgress(
-            id: batchId,
-            title: title,
-            totalFiles: totalFilesCount,
-            totalBytes: totalBytesSum,
-            status: .inProgress
-        )
-
-        let tracker = BatchProgressTracker(
-            batchId: batchId,
-            totalFiles: totalFilesCount,
-            totalBytes: totalBytesSum,
-            initialRecent: initialRecent
-        )
-        self.currentBatchTracker = tracker
-
-        let maxConcurrent = TransferSettings.shared.maxConcurrentTransfers
         let sourceRepo = sourceVM.fileRepository
         let targetRepo = targetVM.fileRepository
+        let transferType: TransferType = targetVM.isLocal ? .download : .upload
 
-        let onUpdate: @Sendable (BatchProgressSnapshot) -> Void = { [weak self, weak targetVM] snapshot in
-            Task { @MainActor [weak self, weak targetVM] in
-                guard let self, let targetVM else { return }
-                self.applyBatchSnapshot(snapshot, targetVM: targetVM)
-            }
-        }
-        let onError: @Sendable (AppError) -> Void = { [weak self] appError in
-            Task { @MainActor [weak self] in
-                self?.error = appError
-            }
-        }
-
-        let result = await BatchTransferCoordinator.shared.executeBatch(
+        let result = await transferManager.executeBatch(
+            title: title,
             items: items,
             directoriesToCreate: directoriesToCreate,
             repository: targetRepo,
-            maxConcurrent: maxConcurrent,
-            retryPolicy: .default,
-            tracker: tracker,
+            transferType: transferType,
+            initialRecent: targetVM.recentTransfers,
             executor: { item, progress in
                 let sourcePath = item.sourceRemoteFile?.path ?? item.remotePath
                 let reader = try await sourceRepo.openStreamReader(at: sourcePath)
@@ -577,27 +545,26 @@ final class CommanderViewModel {
                 await reader.close()
                 closed = true
 
-                var destFile: RemoteFile? = nil
-                if item.isTopLevel, let src = item.sourceRemoteFile {
-                    destFile = RemoteFile(
-                        name: src.name,
-                        path: item.remotePath,
-                        isDirectory: false,
-                        size: src.size,
-                        permissions: src.permissions,
-                        modificationDate: Date(),
-                        owner: src.owner,
-                        group: src.group
-                    )
-                }
-                return destFile
+                guard item.isTopLevel, let src = item.sourceRemoteFile else { return nil }
+                return RemoteFile(
+                    name: src.name,
+                    path: item.remotePath,
+                    isDirectory: false,
+                    size: src.size,
+                    permissions: src.permissions,
+                    modificationDate: Date(),
+                    owner: src.owner,
+                    group: src.group
+                )
             },
-            onUpdate: onUpdate,
-            onError: onError
+            onSnapshot: { [weak self, weak targetVM] snapshot in
+                guard let self, let targetVM else { return }
+                self.applyBatchSnapshot(snapshot, targetVM: targetVM)
+            },
+            onError: { [weak self] appError in
+                self?.error = appError
+            }
         )
-
-        self.lastFailedCommanderItems = result.failedItems
-        self.currentBatchTracker = nil
 
         AnalyticsService.trackBatchTransferred(
             protocol: .init(from: targetVM.connection.connectionType),
@@ -614,26 +581,7 @@ final class CommanderViewModel {
     /// Applies an atomic throttled snapshot from BatchProgressTracker to target FileBrowserViewModel and activeBatch
     func applyBatchSnapshot(_ snapshot: BatchProgressSnapshot, targetVM: FileBrowserViewModel) {
         targetVM.applyBatchSnapshot(snapshot)
-        guard let batch = self.activeBatch, batch.id == snapshot.batchId else { return }
-        var updatedBatch = batch
-        updatedBatch.completedFiles = snapshot.completedFiles
-        updatedBatch.failedFiles = snapshot.failedFiles
-        updatedBatch.cancelledFiles = snapshot.cancelledFiles
-        updatedBatch.queuedFiles = snapshot.queuedFiles
-        updatedBatch.completedBytes = snapshot.completedBytes
-        updatedBatch.transferredBytes = snapshot.transferredBytes
-        updatedBatch.failedTransfers = snapshot.failedTransfers
-        updatedBatch.directoryErrors = snapshot.directoryErrors
-        if snapshot.isFinal {
-            if self.isBatchCancelled || (snapshot.cancelledFiles > 0 && snapshot.completedFiles == 0 && snapshot.failedFiles == 0) {
-                updatedBatch.status = .cancelled
-            } else if snapshot.failedFiles > 0 || !snapshot.failedTransfers.isEmpty || !snapshot.directoryErrors.isEmpty {
-                updatedBatch.status = .failed
-            } else {
-                updatedBatch.status = .completed
-            }
-        }
-        self.activeBatch = updatedBatch
+        transferManager.applyBatchSnapshot(snapshot, updateTransferLists: false)
     }
 
     /// Transfers selected files from active pane to inactive opposite pane
@@ -662,7 +610,7 @@ final class CommanderViewModel {
         }
 
         Task { @MainActor in
-            let allowed = await AppLockManager.shared.authenticateForConnection()
+            let allowed = await dependencyContainer.appLockManager.authenticateForConnection()
             guard allowed else {
                 logInfo("Terminal cancelled: biometric auth denied", category: .auth)
                 return

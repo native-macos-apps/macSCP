@@ -67,17 +67,6 @@ nonisolated final class KnownHostsServerAuthDelegate: NIOSSHClientServerAuthenti
     }
 }
 
-// MARK: - Server Host Key Validator (Accept All Fallback)
-
-nonisolated final class AcceptAllServerAuthDelegate: NIOSSHClientServerAuthenticationDelegate, @unchecked Sendable {
-    nonisolated init() {}
-
-    nonisolated func validateHostKey(hostKey: NIOSSHPublicKey, validationCompletePromise: EventLoopPromise<Void>) {
-        validationCompletePromise.succeed(())
-    }
-}
-
-
 // MARK: - OpenSSH Key Parser
 
 nonisolated enum SSHKeyParser {
@@ -92,7 +81,7 @@ nonisolated enum SSHKeyParser {
             case .invalidKeyFormat:
                 return "The private key file format is invalid."
             case .unsupportedKeyType(let type):
-                return "Unsupported SSH key type '\(type)'. Supported types: Ed25519, P-256."
+                return "Unsupported SSH key type '\(type)'. Supported type: Ed25519 (unencrypted OpenSSH format)."
             case .encryptedKeyNotSupported:
                 return "Passphrase-encrypted OpenSSH keys are currently not supported. Please use an unencrypted key."
             case .base64DecodeFailed:

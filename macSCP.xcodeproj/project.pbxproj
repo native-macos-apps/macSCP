@@ -893,11 +893,6 @@
 			package = 47AD46F92F3E3B2E0043EA07 /* XCRemoteSwiftPackageReference "Sparkle" */;
 			productName = Sparkle;
 		};
-		47TRM0012F30000000000000 /* SwiftTerm */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 47TRM0012F3000000000A1A2 /* XCRemoteSwiftPackageReference "SwiftTerm" */;
-			productName = SwiftTerm;
-		};
 		47NIO0012F30000000000000 /* NIOCore */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 47NIO0012F3000000000A1A2 /* XCRemoteSwiftPackageReference "swift-nio" */;
@@ -917,6 +912,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 47SSH0012F3000000000A1A2 /* XCRemoteSwiftPackageReference "swift-nio-ssh" */;
 			productName = NIOSSH;
+		};
+		47TRM0012F30000000000000 /* SwiftTerm */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 47TRM0012F3000000000A1A2 /* XCRemoteSwiftPackageReference "SwiftTerm" */;
+			productName = SwiftTerm;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

@@ -94,4 +94,4 @@ Quản lý trạng thái giữa các cửa sổ được điều phối qua `Win
 
 ## 7. Known Gaps & Technical Debt
 - ~~`DataStore.swift:38` đang dùng `fatalError` khi khởi tạo `ModelContainer` thất bại; `DataStore.preview` chưa dùng `isStoredInMemoryOnly: true`~~ (Đã xử lý — 2026-11-26: bổ sung in-memory fallback + cảnh báo người dùng tại `CommanderWorkspaceView` và `DataStore(inMemoryOnly: true)` cho preview).
-- Nhiều ViewModel/Service còn gọi trực tiếp `.shared` thay vì nhận qua `DependencyContainer` (`docs/technical-debt.md#2.3`).
+- ~~Nhiều ViewModel/Service còn gọi trực tiếp `.shared` thay vì nhận qua `DependencyContainer`~~ (Đã xử lý — 2026-11-26: mở rộng `DependencyContainer` và inject vào `FileBrowserViewModel`, `CommanderViewModel`, `SettingsView`).

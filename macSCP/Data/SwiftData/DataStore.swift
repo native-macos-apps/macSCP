@@ -77,11 +77,6 @@ final class DataStore {
     func newBackgroundContext() -> ModelContext {
         ModelContext(modelContainer)
     }
-
-    /// Attempts to recover from database corruption by recreating the store
-    static func createWithRecovery() -> ModelContainer {
-        DataStore.shared.modelContainer
-    }
 }
 
 // MARK: - Preview Support
