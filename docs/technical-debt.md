@@ -51,13 +51,13 @@ Tuy nhiên, quá trình phát triển tích lũy một số khoản nợ kỹ th
 | `macSCP/Features/Browser/FileBrowserViewModel.swift` | Đã tách (~610 dòng) | Đã tách `BrowserSessionProtocol`, `BrowserQuickLookController`, `FileTransferManager` |
 | `macSCP/Data/S3/S3Session.swift` | Đã tách (~410 dòng) | Đã tách `S3PathResolver`, `S3ErrorMapper`, `S3Session+Transfers` (`writeStream` đã tách nhỏ) |
 | `macSCP/Features/Commander/CommanderViewModel.swift` | Đã giảm (~550 dòng) | Đã dùng chung `FileTransferManager` thay vì lặp logic batch transfer |
-| `macSCP/Features/Browser/Components/NativeFileTableView.swift` | Còn tồn đọng (P2) | 830 dòng — AppKit `NSOutlineView` + drag/drop + context menu |
-| `macSCP/Features/Commander/Components/NativeServersTableView.swift` | Còn tồn đọng (P2) | 744 dòng — Outline view + context menu + cell views |
+| `macSCP/Features/Browser/Components/NativeFileTableView.swift` | Đã tách (~462 dòng) | Đã tách `NativeFileTableView+DragDrop.swift` (197 dòng) & `NativeFileTableView+ContextMenu.swift` (204 dòng) |
+| `macSCP/Features/Commander/Components/NativeServersTableView.swift` | Đã tách (~327 dòng) | Đã tách `NativeServersTableView+ContextMenu.swift` (192 dòng) & `ServerTableCellViews.swift` (214 dòng) |
 
-**Các hàm dài còn lại cần tách dần (P2):**
-* `BatchTransferCoordinator.executeBatch` & `transferSingleItemWithRetry` (`BatchTransferCoordinator.swift`)
-* `FileTypeService.typeDescription` — 126 dòng (`FileTypeService.swift:68`)
-* `SFTPTransferEngine.uploadSingleFile` & `downloadSingleFile` — 104 dòng mỗi hàm (`SFTPTransferEngine.swift:100,303`)
+**Các hàm dài đã tách nhỏ (2026-11-26):**
+* ~~`BatchTransferCoordinator.executeBatch` & `transferSingleItemWithRetry`~~ — đã tách `runWorkerPool`, `markRemainingItemsCancelled`, `executeTransferWithRetries`, `emitFailureOrCancel` (`BatchTransferCoordinator.swift`).
+* ~~`FileTypeService.typeDescription`~~ — đã chuyển sang bảng tra cứu `extensionDescriptions` / `fileTypeDescriptions` (`FileTypeService.swift`).
+* ~~`SFTPTransferEngine.uploadSingleFile` & `downloadSingleFile`~~ — đã tách `prepareLocalDestinationFile`, `downloadSmallFile`, `downloadWithSlidingWindow`, `uploadSmallFile`, `uploadWithSlidingWindow` (`SFTPTransferEngine.swift`).
 
 ### 2.2. ~~Leaky Abstraction theo loại kết nối~~ (Đã xử lý — 2026-11-26)
 * **Giải pháp đã triển khai:** Giới thiệu `BrowserSessionProtocol` (`macSCP/Features/Browser/BrowserSession.swift`) với 3 triển khai `LocalBrowserSession`, `SFTPBrowserSession`, và `S3BrowserSession`. `FileBrowserViewModel` không còn giữ trực tiếp `sftpSession`/`s3Session` hay phân nhánh theo giao thức.
@@ -96,8 +96,8 @@ Tuy nhiên, quá trình phát triển tích lũy một số khoản nợ kỹ th
 ## 4. Vệ sinh Repo & Khoảng trống Kiểm thử (P2)
 
 * ~~**File cá nhân của Xcode bị track trong Git:**~~ (Đã xử lý — 2026-11-26: đã `git rm --cached` `xcschememanagement.plist`; `.gitignore` đã chứa `xcuserdata/`).
-* **Độ phủ Unit Tests:** Đã bổ sung unit tests cho `SSHKeyParser`, `KnownHostsManager`, `TransferRetryPolicy`, `StreamingFileScanner`, `RemoteDirectoryManager`, `S3PathResolver`, `S3ErrorMapper`, `BrowserQuickLookController`, `FileTransferManager`, và mở rộng `AppLockManager` (tổng 155 unit tests đều pass).
-  * *Còn tồn đọng (P2):* Unit test sâu hơn cho lớp mạng cấp thấp (`SFTPSession`, `SFTPClient`, `SFTPTransferEngine`, `SFTPMessages`, `S3Session`, `ConnectionRepository`, `FolderRepository`, `LocalFileRepository`).
+* **Độ phủ Unit Tests:** Đã bổ sung unit tests cho `SSHKeyParser`, `KnownHostsManager`, `TransferRetryPolicy`, `StreamingFileScanner`, `RemoteDirectoryManager`, `S3PathResolver`, `S3ErrorMapper`, `BrowserQuickLookController`, `FileTransferManager`, `AppLockManager`, `FileTypeService`, `ConnectionRepository`, `FolderRepository`, `LocalFileRepository`, `SFTPMessages`, `SFTPFileAttributes`, `SFTPClient`, `SFTPTransferEngine`, và `SFTPSession` (tổng **176/176** unit tests pass).
+  * *Ghi chú tùy chọn (Low Priority):* `S3Session` tích hợp trực tiếp với AWS SDK client mock và đơn giản hóa `AnalyticsService.swift` có thể thực hiện khi có thay đổi liên quan.
 
 ---
 
@@ -122,4 +122,4 @@ Tuy nhiên, quá trình phát triển tích lũy một số khoản nợ kỹ th
 - [x] ~~Xóa `xcuserdata` khỏi Git index (`.gitignore` đã có `xcuserdata/`).~~ (2026-11-26)
 - [x] ~~Inject các dependency qua `DependencyContainer` (`FileBrowserViewModel`, `CommanderViewModel`, `SettingsView`); mở `internal init` cho `AppLockManager`, `KnownHostsManager`, `SSHKeyStorageService`.~~ (2026-11-26)
 - [x] ~~Bổ sung unit test cho `SSHKeyParser`, `KnownHostsManager`, `TransferRetryPolicy`, `StreamingFileScanner`, `RemoteDirectoryManager`, `S3PathResolver`, `S3ErrorMapper`, `BrowserQuickLookController`, `FileTransferManager`, và `AppLockManager`.~~ (2026-11-26 — 155/155 tests passed)
-- [ ] (Deferred P2) Tách nhỏ `NativeFileTableView.swift` (830 dòng), `NativeServersTableView.swift` (744 dòng), `FileTypeService.typeDescription`, và bổ sung unit test sâu cho tầng SFTP/SwiftData repository (`SFTPSession`, `SFTPClient`, `SFTPTransferEngine`, `ConnectionRepository`, `FolderRepository`).
+- [x] ~~(Deferred P2) Tách nhỏ `NativeFileTableView.swift`, `NativeServersTableView.swift`, `FileTypeService.typeDescription`, các hàm dài trong `SFTPTransferEngine` / `BatchTransferCoordinator`, và bổ sung unit test sâu cho tầng SFTP/Local/SwiftData (`SFTPSession`, `SFTPClient`, `SFTPTransferEngine`, `SFTPMessages`, `ConnectionRepository`, `FolderRepository`, `LocalFileRepository`, `FileTypeService`).~~ (2026-11-26 — 176/176 tests passed; xem `docs/plans/2026112604-deferred-p2-remediation.md`)

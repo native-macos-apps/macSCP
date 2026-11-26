@@ -106,56 +106,82 @@ final class SFTPTransferEngine: Sendable {
         windowSize: Int,
         progress: TransferProgressHandler?
     ) async throws {
-        // Report initial progress
         progress?(0)
 
-        // Open remote file for reading
         let handle = try await client.openFile(path: remotePath, flags: [.read])
-
         var needsRemoteClose = true
         defer {
             if needsRemoteClose {
-                Task {
-                    try? await client.closeHandle(handle)
-                }
+                Task { try? await client.closeHandle(handle) }
             }
         }
 
-        // Prepare local destination file
+        let fileHandle = try prepareLocalDestinationFile(at: localURL)
+        defer { try? fileHandle.close() }
+
+        if fileSize == 0 {
+            progress?(0)
+        } else if fileSize <= UInt64(chunkSize) {
+            try await downloadSmallFile(
+                client: client,
+                handle: handle,
+                fileHandle: fileHandle,
+                fileSize: UInt32(fileSize),
+                progress: progress
+            )
+        } else {
+            try await downloadWithSlidingWindow(
+                client: client,
+                handle: handle,
+                fileHandle: fileHandle,
+                fileSize: fileSize,
+                chunkSize: chunkSize,
+                windowSize: max(1, windowSize),
+                progress: progress
+            )
+        }
+
+        needsRemoteClose = false
+        try await client.closeHandle(handle)
+    }
+
+    private static func prepareLocalDestinationFile(at localURL: URL) throws -> FileHandle {
         if FileManager.default.fileExists(atPath: localURL.path) {
             try? FileManager.default.removeItem(at: localURL)
         }
         FileManager.default.createFile(atPath: localURL.path, contents: nil)
-        let fileHandle = try FileHandle(forWritingTo: localURL)
-        defer { try? fileHandle.close() }
+        return try FileHandle(forWritingTo: localURL)
+    }
 
-        // If file is empty, we are done
-        guard fileSize > 0 else {
-            progress?(0)
-            needsRemoteClose = false
-            try await client.closeHandle(handle)
-            return
+    private static func downloadSmallFile(
+        client: SFTPClient,
+        handle: ByteBuffer,
+        fileHandle: FileHandle,
+        fileSize: UInt32,
+        progress: TransferProgressHandler?
+    ) async throws {
+        if let buffer = try await client.read(handle: handle, offset: 0, length: fileSize),
+           let chunkData = buffer.getData(at: buffer.readerIndex, length: buffer.readableBytes) {
+            try fileHandle.write(contentsOf: chunkData)
+            progress?(Int64(chunkData.count))
         }
+    }
 
-        // Fast path for small files (<= chunkSize) - avoids task group and sliding window overhead
-        if fileSize <= UInt64(chunkSize) {
-            if let buffer = try await client.read(handle: handle, offset: 0, length: UInt32(fileSize)),
-               let chunkData = buffer.getData(at: 0, length: buffer.readableBytes) {
-                try fileHandle.write(contentsOf: chunkData)
-                progress?(Int64(chunkData.count))
-            }
-            needsRemoteClose = false
-            try await client.closeHandle(handle)
-            return
-        }
-
-        // Sliding window pipelined download
+    private static func downloadWithSlidingWindow(
+        client: SFTPClient,
+        handle: ByteBuffer,
+        fileHandle: FileHandle,
+        fileSize: UInt64,
+        chunkSize: UInt32,
+        windowSize: Int,
+        progress: TransferProgressHandler?
+    ) async throws {
         var nextReadOffset: UInt64 = 0
         var totalBytesDownloaded: Int64 = 0
 
         try await withThrowingTaskGroup(of: (offset: UInt64, data: Data?).self) { group in
-            // Pre-fill window
-            while nextReadOffset < fileSize && group.isEmpty || (nextReadOffset / UInt64(chunkSize) < UInt64(windowSize)) {
+            func scheduleNextChunk() {
+                guard nextReadOffset < fileSize else { return }
                 let offset = nextReadOffset
                 let length = UInt32(min(UInt64(chunkSize), fileSize - offset))
                 nextReadOffset += UInt64(length)
@@ -167,11 +193,13 @@ final class SFTPTransferEngine: Sendable {
                     }
                     return (offset: offset, data: nil)
                 }
-
-                if nextReadOffset >= fileSize { break }
             }
 
-            // As each chunk completes, write to disk and dispatch the next chunk
+            for _ in 0..<windowSize {
+                if nextReadOffset >= fileSize { break }
+                scheduleNextChunk()
+            }
+
             for try await result in group {
                 try Task.checkCancellation()
 
@@ -182,24 +210,9 @@ final class SFTPTransferEngine: Sendable {
                     progress?(totalBytesDownloaded)
                 }
 
-                if nextReadOffset < fileSize {
-                    let offset = nextReadOffset
-                    let length = UInt32(min(UInt64(chunkSize), fileSize - offset))
-                    nextReadOffset += UInt64(length)
-
-                    group.addTask {
-                        try Task.checkCancellation()
-                        if let buffer = try await client.read(handle: handle, offset: offset, length: length) {
-                            return (offset: offset, data: Data(buffer: buffer))
-                        }
-                        return (offset: offset, data: nil)
-                    }
-                }
+                scheduleNextChunk()
             }
         }
-
-        needsRemoteClose = false
-        try await client.closeHandle(handle)
     }
 
     // MARK: - Upload
@@ -312,7 +325,6 @@ final class SFTPTransferEngine: Sendable {
         let fileHandle = try FileHandle(forReadingFrom: localURL)
         defer { try? fileHandle.close() }
 
-        // Report initial progress
         progress?(0)
 
         let handle = try await client.openFile(
@@ -320,48 +332,74 @@ final class SFTPTransferEngine: Sendable {
             flags: [.write, .creat, .trunc],
             attributes: .init()
         )
-
         var needsRemoteClose = true
         defer {
             if needsRemoteClose {
-                Task {
-                    try? await client.closeHandle(handle)
-                }
+                Task { try? await client.closeHandle(handle) }
             }
         }
 
-        guard fileSize > 0 else {
+        if fileSize == 0 {
             progress?(0)
-            needsRemoteClose = false
-            try await client.closeHandle(handle)
-            return
+        } else if fileSize <= UInt64(chunkSize) {
+            try await uploadSmallFile(
+                client: client,
+                handle: handle,
+                fileHandle: fileHandle,
+                progress: progress
+            )
+        } else {
+            try await uploadWithSlidingWindow(
+                client: client,
+                handle: handle,
+                fileHandle: fileHandle,
+                fileSize: fileSize,
+                chunkSize: chunkSize,
+                windowSize: max(1, windowSize),
+                progress: progress
+            )
         }
 
-        // Fast path for small files (<= chunkSize) - avoids task group and sliding window overhead
-        if fileSize <= UInt64(chunkSize) {
-            let data = try fileHandle.readToEnd() ?? Data()
-            if !data.isEmpty {
-                var buffer = ByteBufferAllocator().buffer(capacity: data.count)
-                buffer.writeBytes(data)
-                try await client.write(handle: handle, offset: 0, data: buffer)
-                progress?(Int64(data.count))
-            }
-            needsRemoteClose = false
-            try await client.closeHandle(handle)
-            return
-        }
+        needsRemoteClose = false
+        try await client.closeHandle(handle)
+    }
 
+    private static func uploadSmallFile(
+        client: SFTPClient,
+        handle: ByteBuffer,
+        fileHandle: FileHandle,
+        progress: TransferProgressHandler?
+    ) async throws {
+        let data = try fileHandle.readToEnd() ?? Data()
+        guard !data.isEmpty else { return }
+
+        var buffer = ByteBufferAllocator().buffer(capacity: data.count)
+        buffer.writeBytes(data)
+        try await client.write(handle: handle, offset: 0, data: buffer)
+        progress?(Int64(data.count))
+    }
+
+    private static func uploadWithSlidingWindow(
+        client: SFTPClient,
+        handle: ByteBuffer,
+        fileHandle: FileHandle,
+        fileSize: UInt64,
+        chunkSize: UInt32,
+        windowSize: Int,
+        progress: TransferProgressHandler?
+    ) async throws {
         var nextWriteOffset: UInt64 = 0
         var totalBytesUploaded: Int64 = 0
 
         try await withThrowingTaskGroup(of: (offset: UInt64, count: Int).self) { group in
-            while nextWriteOffset < fileSize && (nextWriteOffset / UInt64(chunkSize) < UInt64(windowSize)) {
+            func scheduleNextChunk() throws -> Bool {
+                guard nextWriteOffset < fileSize else { return false }
                 let offset = nextWriteOffset
                 try fileHandle.seek(toOffset: offset)
                 let bytesToRead = Int(min(UInt64(chunkSize), fileSize - offset))
 
                 guard let chunkData = try fileHandle.read(upToCount: bytesToRead), !chunkData.isEmpty else {
-                    break
+                    return false
                 }
                 nextWriteOffset += UInt64(chunkData.count)
 
@@ -372,36 +410,19 @@ final class SFTPTransferEngine: Sendable {
                     try await client.write(handle: handle, offset: offset, data: buffer)
                     return (offset: offset, count: chunkData.count)
                 }
+                return true
+            }
 
-                if nextWriteOffset >= fileSize { break }
+            for _ in 0..<windowSize {
+                if try !scheduleNextChunk() { break }
             }
 
             for try await result in group {
                 try Task.checkCancellation()
                 totalBytesUploaded += Int64(result.count)
                 progress?(totalBytesUploaded)
-
-                if nextWriteOffset < fileSize {
-                    let offset = nextWriteOffset
-                    try fileHandle.seek(toOffset: offset)
-                    let bytesToRead = Int(min(UInt64(chunkSize), fileSize - offset))
-
-                    if let chunkData = try fileHandle.read(upToCount: bytesToRead), !chunkData.isEmpty {
-                        nextWriteOffset += UInt64(chunkData.count)
-
-                        group.addTask {
-                            try Task.checkCancellation()
-                            var buffer = ByteBufferAllocator().buffer(capacity: chunkData.count)
-                            buffer.writeBytes(chunkData)
-                            try await client.write(handle: handle, offset: offset, data: buffer)
-                            return (offset: offset, count: chunkData.count)
-                        }
-                    }
-                }
+                _ = try scheduleNextChunk()
             }
         }
-
-        needsRemoteClose = false
-        try await client.closeHandle(handle)
     }
 }

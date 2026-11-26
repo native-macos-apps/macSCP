@@ -8,7 +8,6 @@
 
 import SwiftUI
 import AppKit
-import UniformTypeIdentifiers
 
 // MARK: - Node Model
 
@@ -119,7 +118,7 @@ struct NativeServersTableView: NSViewRepresentable {
 // MARK: - Coordinator
 
 extension NativeServersTableView {
-    final class Coordinator: NSObject, NSOutlineViewDelegate, NSOutlineViewDataSource, ServerContextMenuDelegate {
+    final class Coordinator: NSObject, NSOutlineViewDelegate, NSOutlineViewDataSource {
         var parent: NativeServersTableView
         weak var outlineView: ServerOutlineView?
 
@@ -227,35 +226,35 @@ extension NativeServersTableView {
 
             switch node.kind {
             case .folder(let folder):
-                let cellId = NSUserInterfaceItemIdentifier("FolderCell")
-                var cell = outlineView.makeView(withIdentifier: cellId, owner: self) as? FolderTableCellView
-                if cell == nil {
-                    cell = FolderTableCellView()
-                    cell?.identifier = cellId
-                }
-                cell?.configure(folder: folder, count: node.children.count)
+                let cell = dequeueFolderCell(in: outlineView, identifier: "FolderCell")
+                cell.configure(folder: folder, count: node.children.count)
                 return cell
 
             case .ungroupedHeader:
-                let cellId = NSUserInterfaceItemIdentifier("UngroupedCell")
-                var cell = outlineView.makeView(withIdentifier: cellId, owner: self) as? FolderTableCellView
-                if cell == nil {
-                    cell = FolderTableCellView()
-                    cell?.identifier = cellId
-                }
-                cell?.configure(title: "Ungrouped", iconName: "tray.fill", count: node.children.count)
+                let cell = dequeueFolderCell(in: outlineView, identifier: "UngroupedCell")
+                cell.configure(title: "Ungrouped", iconName: "tray.fill", count: node.children.count)
                 return cell
 
             case .connection(let connection):
                 let cellId = NSUserInterfaceItemIdentifier("ServerCell")
-                var cell = outlineView.makeView(withIdentifier: cellId, owner: self) as? ServerTableCellView
-                if cell == nil {
-                    cell = ServerTableCellView()
-                    cell?.identifier = cellId
-                }
-                cell?.configure(connection: connection)
+                let cell = (outlineView.makeView(withIdentifier: cellId, owner: self) as? ServerTableCellView) ?? {
+                    let created = ServerTableCellView()
+                    created.identifier = cellId
+                    return created
+                }()
+                cell.configure(connection: connection)
                 return cell
             }
+        }
+
+        private func dequeueFolderCell(in outlineView: NSOutlineView, identifier: String) -> FolderTableCellView {
+            let cellId = NSUserInterfaceItemIdentifier(identifier)
+            if let existing = outlineView.makeView(withIdentifier: cellId, owner: self) as? FolderTableCellView {
+                return existing
+            }
+            let created = FolderTableCellView()
+            created.identifier = cellId
+            return created
         }
 
         func outlineViewItemDidCollapse(_ notification: Notification) {
@@ -324,428 +323,5 @@ extension NativeServersTableView {
                 return false
             }
         }
-
-        // MARK: - ServerContextMenuDelegate
-
-        func contextMenu(for node: ServerOutlineNode) -> NSMenu? {
-            let menu = NSMenu()
-
-            switch node.kind {
-            case .connection(let conn):
-                let connectThis = NSMenuItem(title: "Connect in this Pane", action: #selector(handleConnectInThisPane(_:)), keyEquivalent: "")
-                connectThis.image = NSImage(systemSymbolName: "bolt.fill", accessibilityDescription: nil)
-                connectThis.target = self
-                connectThis.representedObject = conn
-                menu.addItem(connectThis)
-
-                let connectOther = NSMenuItem(title: "Connect in Other Pane", action: #selector(handleConnectInOtherPane(_:)), keyEquivalent: "")
-                connectOther.image = NSImage(systemSymbolName: "arrow.right.circle", accessibilityDescription: nil)
-                connectOther.target = self
-                connectOther.representedObject = conn
-                menu.addItem(connectOther)
-
-                if conn.connectionType == .sftp {
-                    let terminalItem = NSMenuItem(title: "Open in Terminal (SSH)", action: #selector(handleOpenTerminal(_:)), keyEquivalent: "")
-                    terminalItem.image = NSImage(systemSymbolName: "terminal", accessibilityDescription: nil)
-                    terminalItem.target = self
-                    terminalItem.representedObject = conn
-                    menu.addItem(terminalItem)
-                }
-
-                menu.addItem(.separator())
-
-                let editItem = NSMenuItem(title: "Edit…", action: #selector(handleEdit(_:)), keyEquivalent: "")
-                editItem.image = NSImage(systemSymbolName: "pencil", accessibilityDescription: nil)
-                editItem.target = self
-                editItem.representedObject = conn
-                menu.addItem(editItem)
-
-                let duplicateItem = NSMenuItem(title: "Duplicate", action: #selector(handleDuplicate(_:)), keyEquivalent: "")
-                duplicateItem.image = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: nil)
-                duplicateItem.target = self
-                duplicateItem.representedObject = conn
-                menu.addItem(duplicateItem)
-
-                if !parent.folders.isEmpty {
-                    let moveMenu = NSMenu()
-                    let noneItem = NSMenuItem(title: "None (Ungrouped)", action: #selector(handleMoveToNone(_:)), keyEquivalent: "")
-                    noneItem.target = self
-                    noneItem.representedObject = conn
-                    moveMenu.addItem(noneItem)
-                    moveMenu.addItem(.separator())
-
-                    for folder in parent.folders {
-                        let folderItem = NSMenuItem(title: folder.name, action: #selector(handleMoveToFolder(_:)), keyEquivalent: "")
-                        folderItem.target = self
-                        folderItem.representedObject = (conn, folder)
-                        moveMenu.addItem(folderItem)
-                    }
-
-                    let moveItem = NSMenuItem(title: "Move to Folder", action: nil, keyEquivalent: "")
-                    moveItem.image = NSImage(systemSymbolName: "folder", accessibilityDescription: nil)
-                    moveItem.submenu = moveMenu
-                    menu.addItem(moveItem)
-                }
-
-                menu.addItem(.separator())
-
-                let deleteItem = NSMenuItem(title: "Delete", action: #selector(handleDelete(_:)), keyEquivalent: "")
-                deleteItem.image = NSImage(systemSymbolName: "trash", accessibilityDescription: nil)
-                deleteItem.target = self
-                deleteItem.representedObject = conn
-                menu.addItem(deleteItem)
-
-            case .folder(let folder):
-                let renameFolderItem = NSMenuItem(title: "Rename…", action: #selector(handleRenameFolder(_:)), keyEquivalent: "")
-                renameFolderItem.image = NSImage(systemSymbolName: "pencil", accessibilityDescription: nil)
-                renameFolderItem.target = self
-                renameFolderItem.representedObject = folder
-                menu.addItem(renameFolderItem)
-
-                menu.addItem(.separator())
-
-                let deleteFolderItem = NSMenuItem(title: "Delete Folder", action: #selector(handleDeleteFolder(_:)), keyEquivalent: "")
-                deleteFolderItem.image = NSImage(systemSymbolName: "trash", accessibilityDescription: nil)
-                deleteFolderItem.target = self
-                deleteFolderItem.representedObject = folder
-                menu.addItem(deleteFolderItem)
-
-            case .ungroupedHeader:
-                return emptyAreaContextMenu()
-            }
-
-            return menu
-        }
-
-        func emptyAreaContextMenu() -> NSMenu? {
-            let menu = NSMenu()
-
-            let newConn = NSMenuItem(title: "New Connection…", action: #selector(handleNewConnection(_:)), keyEquivalent: "")
-            newConn.image = NSImage(systemSymbolName: "plus", accessibilityDescription: nil)
-            newConn.target = self
-            menu.addItem(newConn)
-
-            let newFolder = NSMenuItem(title: "New Folder…", action: #selector(handleNewFolder(_:)), keyEquivalent: "")
-            newFolder.image = NSImage(systemSymbolName: "folder.badge.plus", accessibilityDescription: nil)
-            newFolder.target = self
-            menu.addItem(newFolder)
-
-            return menu
-        }
-
-        // Action Handlers
-        @objc private func handleConnectInThisPane(_ sender: NSMenuItem) {
-            guard let conn = sender.representedObject as? Connection else { return }
-            parent.onConnect(conn)
-        }
-
-        @objc private func handleConnectInOtherPane(_ sender: NSMenuItem) {
-            guard let conn = sender.representedObject as? Connection else { return }
-            parent.onConnectInOtherPane(conn)
-        }
-
-        @objc private func handleOpenTerminal(_ sender: NSMenuItem) {
-            guard let conn = sender.representedObject as? Connection else { return }
-            parent.onOpenTerminal(conn)
-        }
-
-        @objc private func handleEdit(_ sender: NSMenuItem) {
-            guard let conn = sender.representedObject as? Connection else { return }
-            parent.onEdit(conn)
-        }
-
-        @objc private func handleDuplicate(_ sender: NSMenuItem) {
-            guard let conn = sender.representedObject as? Connection else { return }
-            parent.onDuplicate(conn)
-        }
-
-        @objc private func handleDelete(_ sender: NSMenuItem) {
-            guard let conn = sender.representedObject as? Connection else { return }
-            parent.onDelete(conn)
-        }
-
-        @objc private func handleMoveToNone(_ sender: NSMenuItem) {
-            guard let conn = sender.representedObject as? Connection else { return }
-            parent.onMove(conn, nil)
-        }
-
-        @objc private func handleMoveToFolder(_ sender: NSMenuItem) {
-            guard let (conn, folder) = sender.representedObject as? (Connection, Folder) else { return }
-            parent.onMove(conn, folder)
-        }
-
-        @objc private func handleDeleteFolder(_ sender: NSMenuItem) {
-            guard let folder = sender.representedObject as? Folder else { return }
-            parent.onDeleteFolder(folder)
-        }
-
-        @objc private func handleRenameFolder(_ sender: NSMenuItem) {
-            guard let folder = sender.representedObject as? Folder else { return }
-            parent.onRenameFolder(folder)
-        }
-
-        @objc private func handleNewConnection(_ sender: NSMenuItem) {
-            parent.onNewConnection()
-        }
-
-        @objc private func handleNewFolder(_ sender: NSMenuItem) {
-            parent.onNewFolder()
-        }
-    }
-}
-
-// MARK: - ServerOutlineView Subclass
-
-protocol ServerContextMenuDelegate: AnyObject {
-    func contextMenu(for node: ServerOutlineNode) -> NSMenu?
-    func emptyAreaContextMenu() -> NSMenu?
-}
-
-final class ServerOutlineView: NSOutlineView {
-    weak var serverContextMenuDelegate: ServerContextMenuDelegate?
-
-    override func menu(for event: NSEvent) -> NSMenu? {
-        let point = convert(event.locationInWindow, from: nil)
-        let row = self.row(at: point)
-        if row >= 0 {
-            if !selectedRowIndexes.contains(row) {
-                selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
-            }
-            guard let node = item(atRow: row) as? ServerOutlineNode else { return nil }
-            return serverContextMenuDelegate?.contextMenu(for: node)
-        } else {
-            return serverContextMenuDelegate?.emptyAreaContextMenu()
-        }
-    }
-
-    override func keyDown(with event: NSEvent) {
-        if event.keyCode == 36 { // Return key
-            if selectedRow >= 0, let node = item(atRow: selectedRow) as? ServerOutlineNode {
-                switch node.kind {
-                case .connection(let conn):
-                    (delegate as? NativeServersTableView.Coordinator)?.parent.onConnect(conn)
-                    return
-                case .folder, .ungroupedHeader:
-                    if isItemExpanded(node) {
-                        collapseItem(node)
-                    } else {
-                        expandItem(node)
-                    }
-                    return
-                }
-            }
-        }
-        super.keyDown(with: event)
-    }
-}
-
-// MARK: - Custom Cells
-
-final class ServerTableCellView: NSTableCellView {
-    private let iconImageView = NSImageView()
-    private let nameLabel = NSTextField(labelWithString: "")
-    private let detailLabel = NSTextField(labelWithString: "")
-    private let badgeLabel = NSTextField(labelWithString: "")
-    private let badgeContainer = NSBox()
-    private var defaultIconColor: NSColor = .systemBlue
-
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
-        setup()
-    }
-
-    required init?(coder: NSCoder) {
-        super.init(coder: coder)
-        setup()
-    }
-
-    private func setup() {
-        // Icon
-        iconImageView.translatesAutoresizingMaskIntoConstraints = false
-        iconImageView.imageScaling = .scaleProportionallyUpOrDown
-        addSubview(iconImageView)
-
-        // Labels Container
-        nameLabel.translatesAutoresizingMaskIntoConstraints = false
-        nameLabel.font = .systemFont(ofSize: 12, weight: .semibold)
-        nameLabel.textColor = .labelColor
-        nameLabel.lineBreakMode = .byTruncatingTail
-        addSubview(nameLabel)
-
-        detailLabel.translatesAutoresizingMaskIntoConstraints = false
-        detailLabel.font = .monospacedSystemFont(ofSize: 10, weight: .regular)
-        detailLabel.textColor = .secondaryLabelColor
-        detailLabel.lineBreakMode = .byTruncatingMiddle
-        addSubview(detailLabel)
-
-        // Badge Container
-        badgeContainer.translatesAutoresizingMaskIntoConstraints = false
-        badgeContainer.boxType = .custom
-        badgeContainer.borderWidth = 0
-        badgeContainer.cornerRadius = 4
-        badgeContainer.fillColor = NSColor.labelColor.withAlphaComponent(0.06)
-
-        badgeLabel.translatesAutoresizingMaskIntoConstraints = false
-        badgeLabel.font = .systemFont(ofSize: 9, weight: .medium)
-        badgeLabel.textColor = .secondaryLabelColor
-        badgeLabel.alignment = .center
-        badgeContainer.addSubview(badgeLabel)
-        addSubview(badgeContainer)
-
-        NSLayoutConstraint.activate([
-            iconImageView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
-            iconImageView.centerYAnchor.constraint(equalTo: centerYAnchor),
-            iconImageView.widthAnchor.constraint(equalToConstant: 20),
-            iconImageView.heightAnchor.constraint(equalToConstant: 20),
-
-            nameLabel.leadingAnchor.constraint(equalTo: iconImageView.trailingAnchor, constant: 8),
-            nameLabel.topAnchor.constraint(equalTo: topAnchor, constant: 4),
-            nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: badgeContainer.leadingAnchor, constant: -6),
-
-            detailLabel.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
-            detailLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 2),
-            detailLabel.trailingAnchor.constraint(lessThanOrEqualTo: badgeContainer.leadingAnchor, constant: -6),
-
-            badgeContainer.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            badgeContainer.centerYAnchor.constraint(equalTo: centerYAnchor),
-            badgeContainer.heightAnchor.constraint(equalToConstant: 16),
-
-            badgeLabel.leadingAnchor.constraint(equalTo: badgeContainer.leadingAnchor, constant: 5),
-            badgeLabel.trailingAnchor.constraint(equalTo: badgeContainer.trailingAnchor, constant: -5),
-            badgeLabel.centerYAnchor.constraint(equalTo: badgeContainer.centerYAnchor)
-        ])
-    }
-
-    override var backgroundStyle: NSView.BackgroundStyle {
-        didSet {
-            updateColors()
-        }
-    }
-
-    private func updateColors() {
-        let isEmphasized = backgroundStyle == .emphasized
-        if isEmphasized {
-            nameLabel.textColor = .white
-            detailLabel.textColor = NSColor.white.withAlphaComponent(0.8)
-            badgeLabel.textColor = .white
-            badgeContainer.fillColor = NSColor.white.withAlphaComponent(0.2)
-            iconImageView.contentTintColor = .white
-        } else {
-            nameLabel.textColor = .labelColor
-            detailLabel.textColor = .secondaryLabelColor
-            badgeLabel.textColor = .secondaryLabelColor
-            badgeContainer.fillColor = NSColor.labelColor.withAlphaComponent(0.06)
-            iconImageView.contentTintColor = defaultIconColor
-        }
-    }
-
-    func configure(connection: Connection) {
-        nameLabel.stringValue = connection.name
-        detailLabel.stringValue = connection.connectionString
-        badgeLabel.stringValue = connection.connectionType.displayName
-
-        let iconName = connection.iconName
-        if let img = NSImage(systemSymbolName: iconName, accessibilityDescription: nil) {
-            let config = NSImage.SymbolConfiguration(pointSize: 14, weight: .regular)
-            iconImageView.image = img.withSymbolConfiguration(config)
-        }
-
-        switch connection.connectionType {
-        case .sftp:
-            defaultIconColor = .systemBlue
-        case .s3:
-            defaultIconColor = .systemOrange
-        case .local:
-            defaultIconColor = .systemGreen
-        }
-        updateColors()
-    }
-}
-
-final class FolderTableCellView: NSTableCellView {
-    private let iconImageView = NSImageView()
-    private let titleLabel = NSTextField(labelWithString: "")
-    private let countLabel = NSTextField(labelWithString: "")
-    private var defaultTintColor: NSColor = .controlAccentColor
-
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
-        setup()
-    }
-
-    required init?(coder: NSCoder) {
-        super.init(coder: coder)
-        setup()
-    }
-
-    private func setup() {
-        iconImageView.translatesAutoresizingMaskIntoConstraints = false
-        iconImageView.imageScaling = .scaleProportionallyUpOrDown
-        addSubview(iconImageView)
-
-        titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.font = .systemFont(ofSize: 12, weight: .semibold)
-        titleLabel.textColor = .labelColor
-        addSubview(titleLabel)
-
-        countLabel.translatesAutoresizingMaskIntoConstraints = false
-        countLabel.font = .systemFont(ofSize: 11, weight: .regular)
-        countLabel.textColor = .secondaryLabelColor
-        addSubview(countLabel)
-
-        NSLayoutConstraint.activate([
-            iconImageView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
-            iconImageView.centerYAnchor.constraint(equalTo: centerYAnchor),
-            iconImageView.widthAnchor.constraint(equalToConstant: 20),
-            iconImageView.heightAnchor.constraint(equalToConstant: 18),
-
-            titleLabel.leadingAnchor.constraint(equalTo: iconImageView.trailingAnchor, constant: 7),
-            titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
-
-            countLabel.leadingAnchor.constraint(equalTo: titleLabel.trailingAnchor, constant: 4),
-            countLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -4),
-            countLabel.centerYAnchor.constraint(equalTo: centerYAnchor)
-        ])
-    }
-
-    override var backgroundStyle: NSView.BackgroundStyle {
-        didSet {
-            updateColors()
-        }
-    }
-
-    private var isSystemFolderIcon = false
-
-    private func updateColors() {
-        let isEmphasized = backgroundStyle == .emphasized
-        if isEmphasized {
-            titleLabel.textColor = .white
-            countLabel.textColor = NSColor.white.withAlphaComponent(0.75)
-            iconImageView.contentTintColor = isSystemFolderIcon ? nil : .white
-        } else {
-            titleLabel.textColor = .labelColor
-            countLabel.textColor = .secondaryLabelColor
-            iconImageView.contentTintColor = isSystemFolderIcon ? nil : defaultTintColor
-        }
-    }
-
-    func configure(folder: Folder, count: Int) {
-        titleLabel.stringValue = folder.name
-        countLabel.stringValue = "(\(count))"
-        isSystemFolderIcon = true
-        iconImageView.image = NSWorkspace.shared.icon(for: .folder)
-        updateColors()
-    }
-
-    func configure(title: String, iconName: String, count: Int) {
-        titleLabel.stringValue = title
-        countLabel.stringValue = "(\(count))"
-        isSystemFolderIcon = false
-        defaultTintColor = .secondaryLabelColor
-        if let img = NSImage(systemSymbolName: iconName, accessibilityDescription: nil) {
-            let config = NSImage.SymbolConfiguration(pointSize: 14, weight: .medium)
-            iconImageView.image = img.withSymbolConfiguration(config)
-        }
-        updateColors()
     }
 }

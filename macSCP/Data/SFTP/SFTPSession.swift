@@ -18,6 +18,13 @@ actor SFTPSession: SFTPSessionProtocol {
 
     init() {}
 
+    /// Testability initializer allowing injection of an established SFTPClient
+    init(client: SFTPClient, currentPath: String = "/") {
+        self.client = client
+        self.isConnected = true
+        self.currentPath = currentPath
+    }
+
     // MARK: - Connection
 
     func connect(
@@ -464,7 +471,7 @@ actor SFTPSession: SFTPSessionProtocol {
         }
     }
 
-    private func parseError(_ error: Error) -> AppError {
+    func parseError(_ error: Error) -> AppError {
         if let appError = error as? AppError {
             return appError
         }

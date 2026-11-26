@@ -63,15 +63,62 @@ final class BatchTransferCoordinator: Sendable {
         }
 
         // 2. Concurrency-bounded worker pool for file transfers
+        let (scheduledIndex, failedItems) = await runWorkerPool(
+            items: items,
+            maxConcurrent: maxConcurrent,
+            transferType: transferType,
+            directoryManager: directoryManager,
+            retryPolicy: retryPolicy,
+            tracker: tracker,
+            executor: executor,
+            onUpdate: onUpdate,
+            onError: onError
+        )
+
+        // 3. If batch or task was cancelled, mark all remaining queued items as cancelled
+        let isCancelled = tracker.isBatchCancelled || Task.isCancelled
+        if isCancelled {
+            markRemainingItemsCancelled(
+                items: items,
+                startingAt: scheduledIndex,
+                transferType: transferType,
+                tracker: tracker
+            )
+        }
+
+        // 4. Drain remaining in-flight state without fabricating 100% completion
+        let finalSnapshot = tracker.drainFinal(isCancelled: isCancelled)
+        onUpdate(finalSnapshot)
+
+        return BatchExecutionResult(
+            completedFiles: tracker.completedFiles,
+            failedFiles: tracker.failedFiles,
+            cancelledFiles: tracker.cancelledFiles,
+            completedBytes: tracker.completedBytes,
+            totalBytes: tracker.totalBytes,
+            failedItems: failedItems,
+            isCancelled: isCancelled
+        )
+    }
+
+    private func runWorkerPool(
+        items: [TransferQueueItem],
+        maxConcurrent: Int,
+        transferType: TransferType,
+        directoryManager: RemoteDirectoryManager,
+        retryPolicy: TransferRetryPolicy,
+        tracker: BatchProgressTracker,
+        executor: @escaping TransferExecutor,
+        onUpdate: @escaping @Sendable (BatchProgressSnapshot) -> Void,
+        onError: (@Sendable (AppError) -> Void)?
+    ) async -> (scheduledIndex: Int, failedItems: [TransferQueueItem]) {
         let concurrency = max(1, min(16, maxConcurrent))
         let failedItemsLock = OSAllocatedUnfairLock<[TransferQueueItem]>(initialState: [])
         var itemIndex = 0
 
         await withTaskGroup(of: Void.self) { group in
-            let total = items.count
-            let initialCount = min(concurrency, total)
-
-            while itemIndex < initialCount {
+            func enqueueNext() {
+                guard itemIndex < items.count else { return }
                 let item = items[itemIndex]
                 itemIndex += 1
                 group.addTask {
@@ -91,71 +138,48 @@ final class BatchTransferCoordinator: Sendable {
                 }
             }
 
+            for _ in 0..<min(concurrency, items.count) {
+                enqueueNext()
+            }
+
             for await _ in group {
                 if Task.isCancelled || tracker.isBatchCancelled {
-                    // Halt scheduling new files; active workers will receive cancellation
                     break
                 }
-                if itemIndex < total {
-                    let nextItem = items[itemIndex]
-                    itemIndex += 1
-                    group.addTask {
-                        let succeeded = await self.transferSingleItemWithRetry(
-                            item: nextItem,
-                            transferType: transferType,
-                            directoryManager: directoryManager,
-                            retryPolicy: retryPolicy,
-                            tracker: tracker,
-                            executor: executor,
-                            onUpdate: onUpdate,
-                            onError: onError
-                        )
-                        if !succeeded && !tracker.isBatchCancelled {
-                            failedItemsLock.withLock { $0.append(nextItem) }
-                        }
-                    }
-                }
+                enqueueNext()
             }
         }
 
-        // 3. If batch or task was cancelled, mark all remaining queued items as cancelled
-        let isCancelled = tracker.isBatchCancelled || Task.isCancelled
-        if isCancelled {
-            let scheduledIndex = itemIndex
-            if scheduledIndex < items.count {
-                for item in items[scheduledIndex...] {
-                    let transfer = TransferProgress(
-                        id: item.id,
-                        fileName: item.displayName,
-                        localURL: item.localURL,
-                        remotePath: item.remotePath,
-                        bytesTransferred: 0,
-                        totalBytes: item.fileSize,
-                        transferType: transferType,
-                        status: .cancelled,
-                        isDirectory: false,
-                        itemCount: 1
-                    )
-                    _ = tracker.registerActive(transfer: transfer)
-                }
-            }
+        return (itemIndex, failedItemsLock.withLock { $0 })
+    }
+
+    private func markRemainingItemsCancelled(
+        items: [TransferQueueItem],
+        startingAt scheduledIndex: Int,
+        transferType: TransferType,
+        tracker: BatchProgressTracker
+    ) {
+        guard scheduledIndex < items.count else { return }
+        for item in items[scheduledIndex...] {
+            let transfer = TransferProgress(
+                id: item.id,
+                fileName: item.displayName,
+                localURL: item.localURL,
+                remotePath: item.remotePath,
+                bytesTransferred: 0,
+                totalBytes: item.fileSize,
+                transferType: transferType,
+                status: .cancelled,
+                isDirectory: false,
+                itemCount: 1
+            )
+            _ = tracker.registerActive(transfer: transfer)
         }
+    }
 
-        // 4. Drain remaining in-flight state without fabricating 100% completion
-        let finalSnapshot = tracker.drainFinal(isCancelled: isCancelled)
-        onUpdate(finalSnapshot)
-
-        let failedItems = failedItemsLock.withLock { $0 }
-
-        return BatchExecutionResult(
-            completedFiles: tracker.completedFiles,
-            failedFiles: tracker.failedFiles,
-            cancelledFiles: tracker.cancelledFiles,
-            completedBytes: tracker.completedBytes,
-            totalBytes: tracker.totalBytes,
-            failedItems: failedItems,
-            isCancelled: isCancelled
-        )
+    private struct ItemCancellationState: Sendable {
+        var isCancelled = false
+        var cancelAction: (@Sendable () -> Void)?
     }
 
     private func transferSingleItemWithRetry(
@@ -169,22 +193,17 @@ final class BatchTransferCoordinator: Sendable {
         onError: (@Sendable (AppError) -> Void)?
     ) async -> Bool {
         if Task.isCancelled || tracker.isBatchCancelled {
-            if let snapshot = tracker.failOrCancelFile(id: item.id, totalBytes: item.fileSize, error: nil, isCancelled: true) {
-                onUpdate(snapshot)
-            }
+            emitFailureOrCancel(item: item, error: nil, isCancelled: true, tracker: tracker, onUpdate: onUpdate)
             return false
         }
 
-        // Check parent directory dependency
         if let ancestorError = await directoryManager.failureForAncestor(of: item.remotePath) {
             let error = NSError(
                 domain: "com.macSCP.parentDirectoryFailed",
                 code: 400,
                 userInfo: [NSLocalizedDescriptionKey: ancestorError]
             )
-            if let snapshot = tracker.failOrCancelFile(id: item.id, totalBytes: item.fileSize, error: error, isCancelled: false) {
-                onUpdate(snapshot)
-            }
+            emitFailureOrCancel(item: item, error: error, isCancelled: false, tracker: tracker, onUpdate: onUpdate)
             return false
         }
 
@@ -202,12 +221,7 @@ final class BatchTransferCoordinator: Sendable {
             maxRetries: retryPolicy.maxRetries
         )
 
-        // Thread-safe cancellation state shared between worker task and UI cancellation callback
-        struct CancellationState: Sendable {
-            var isCancelled = false
-            var cancelAction: (@Sendable () -> Void)?
-        }
-        let cancellationLock = OSAllocatedUnfairLock(initialState: CancellationState())
+        let cancellationLock = OSAllocatedUnfairLock(initialState: ItemCancellationState())
 
         if let snapshot = tracker.registerActive(transfer: transfer, onCancel: {
             let action = cancellationLock.withLock { state -> (@Sendable () -> Void)? in
@@ -221,15 +235,33 @@ final class BatchTransferCoordinator: Sendable {
             onUpdate(snapshot)
         }
 
+        return await executeTransferWithRetries(
+            item: item,
+            retryPolicy: retryPolicy,
+            tracker: tracker,
+            cancellationLock: cancellationLock,
+            executor: executor,
+            onUpdate: onUpdate,
+            onError: onError
+        )
+    }
+
+    private func executeTransferWithRetries(
+        item: TransferQueueItem,
+        retryPolicy: TransferRetryPolicy,
+        tracker: BatchProgressTracker,
+        cancellationLock: OSAllocatedUnfairLock<ItemCancellationState>,
+        executor: @escaping TransferExecutor,
+        onUpdate: @escaping @Sendable (BatchProgressSnapshot) -> Void,
+        onError: (@Sendable (AppError) -> Void)?
+    ) async -> Bool {
         var attempt = 0
         while true {
             attempt += 1
 
             let isItemCancelled = cancellationLock.withLock { $0.isCancelled }
             if Task.isCancelled || tracker.isBatchCancelled || isItemCancelled {
-                if let snapshot = tracker.failOrCancelFile(id: item.id, totalBytes: item.fileSize, error: nil, isCancelled: true) {
-                    onUpdate(snapshot)
-                }
+                emitFailureOrCancel(item: item, error: nil, isCancelled: true, tracker: tracker, onUpdate: onUpdate)
                 return false
             }
 
@@ -241,13 +273,10 @@ final class BatchTransferCoordinator: Sendable {
                     }
                 }
             }
+
             let cancelledBeforeStart = cancellationLock.withLock { state -> Bool in
-                if state.isCancelled {
-                    return true
-                }
-                state.cancelAction = {
-                    transferTask.cancel()
-                }
+                if state.isCancelled { return true }
+                state.cancelAction = { transferTask.cancel() }
                 return false
             }
             if cancelledBeforeStart {
@@ -264,39 +293,40 @@ final class BatchTransferCoordinator: Sendable {
                 return true
             } catch {
                 let isCancelled = Task.isCancelled || tracker.isBatchCancelled || error is CancellationError
-
                 if isCancelled {
-                    if let snapshot = tracker.failOrCancelFile(id: item.id, totalBytes: item.fileSize, error: nil, isCancelled: true) {
-                        onUpdate(snapshot)
-                    }
+                    emitFailureOrCancel(item: item, error: nil, isCancelled: true, tracker: tracker, onUpdate: onUpdate)
                     return false
                 }
 
-                // Check if transient and should retry
                 if retryPolicy.shouldRetry(error: error, attempt: attempt) {
                     let delay = retryPolicy.delay(forAttempt: attempt)
-                    // Sleep with cancellation support
                     do {
                         try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
                         continue
                     } catch {
-                        // Sleep was cancelled
-                        if let snapshot = tracker.failOrCancelFile(id: item.id, totalBytes: item.fileSize, error: nil, isCancelled: true) {
-                            onUpdate(snapshot)
-                        }
+                        emitFailureOrCancel(item: item, error: nil, isCancelled: true, tracker: tracker, onUpdate: onUpdate)
                         return false
                     }
                 }
 
-                // Permanent failure or max retries exceeded
-                if let snapshot = tracker.failOrCancelFile(id: item.id, totalBytes: item.fileSize, error: error, isCancelled: false) {
-                    onUpdate(snapshot)
-                }
+                emitFailureOrCancel(item: item, error: error, isCancelled: false, tracker: tracker, onUpdate: onUpdate)
                 if let appError = error as? AppError {
                     onError?(appError)
                 }
                 return false
             }
+        }
+    }
+
+    private func emitFailureOrCancel(
+        item: TransferQueueItem,
+        error: Error?,
+        isCancelled: Bool,
+        tracker: BatchProgressTracker,
+        onUpdate: @escaping @Sendable (BatchProgressSnapshot) -> Void
+    ) {
+        if let snapshot = tracker.failOrCancelFile(id: item.id, totalBytes: item.fileSize, error: error, isCancelled: isCancelled) {
+            onUpdate(snapshot)
         }
     }
 }

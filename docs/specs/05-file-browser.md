@@ -8,6 +8,8 @@ related_files:
   - MacSCP/Features/Browser/FileBrowserView.swift
   - MacSCP/Features/Browser/FileBrowserWindow.swift
   - MacSCP/Features/Browser/Components/NativeFileTableView.swift
+  - MacSCP/Features/Browser/Components/NativeFileTableView+DragDrop.swift
+  - MacSCP/Features/Browser/Components/NativeFileTableView+ContextMenu.swift
   - MacSCP/Features/Browser/Components/BreadcrumbView.swift
   - MacSCP/Features/Browser/Components/QuickLookPreviewView.swift
   - MacSCP/Features/Browser/Components/LocalPermissionRequestView.swift

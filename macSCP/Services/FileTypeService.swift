@@ -64,132 +64,80 @@ enum FileTypeService {
         return utType.preferredMIMEType ?? "application/octet-stream"
     }
 
+    private static let extensionDescriptions: [String: String] = [
+        "swift": "Swift Source",
+        "js": "JavaScript",
+        "ts": "TypeScript",
+        "py": "Python Script",
+        "rb": "Ruby Script",
+        "go": "Go Source",
+        "rs": "Rust Source",
+        "java": "Java Source",
+        "c": "C Source",
+        "cpp": "C++ Source",
+        "cc": "C++ Source",
+        "h": "C Header",
+        "hpp": "C++ Header",
+        "m": "Objective-C Source",
+        "html": "HTML Document",
+        "htm": "HTML Document",
+        "css": "CSS Stylesheet",
+        "json": "JSON",
+        "xml": "XML Document",
+        "yaml": "YAML Document",
+        "yml": "YAML Document",
+        "md": "Markdown Document",
+        "markdown": "Markdown Document",
+        "txt": "Plain Text",
+        "pdf": "PDF Document",
+        "png": "PNG Image",
+        "jpg": "JPEG Image",
+        "jpeg": "JPEG Image",
+        "gif": "GIF Image",
+        "svg": "SVG Image",
+        "mp4": "MPEG-4 Movie",
+        "mov": "QuickTime Movie",
+        "mp3": "MP3 Audio",
+        "wav": "WAV Audio",
+        "zip": "ZIP Archive",
+        "tar": "TAR Archive",
+        "gz": "Gzip Archive",
+        "gzip": "Gzip Archive",
+        "dmg": "Disk Image",
+        "app": "Application",
+        "xcodeproj": "Xcode Project",
+        "xcworkspace": "Xcode Workspace"
+    ]
+
+    private static let fileTypeDescriptions: [FileType: String] = [
+        .directory: "Folder",
+        .text: "Plain Text",
+        .code: "Source Code",
+        .image: "Image",
+        .video: "Movie",
+        .audio: "Audio",
+        .archive: "Archive",
+        .document: "Document",
+        .spreadsheet: "Spreadsheet",
+        .presentation: "Presentation",
+        .pdf: "PDF Document",
+        .executable: "Unix Executable",
+        .configuration: "Configuration",
+        .unknown: "Document"
+    ]
+
     /// Returns a human-readable description of the file type (Finder style)
     static func typeDescription(for file: RemoteFile) -> String {
-        if isBucket(file) {
-            return "Bucket"
+        if isBucket(file) { return "Bucket" }
+        if file.isDirectory { return "Folder" }
+        if file.isSymlink { return "Alias" }
+
+        let ext = file.fileExtension.lowercased()
+        if let specific = extensionDescriptions[ext] {
+            return specific
         }
 
-        if file.isDirectory {
-            return "Folder"
-        }
-
-        if file.isSymlink {
-            return "Alias"
-        }
-
-        // Check for specific extensions first
-        switch file.fileExtension.lowercased() {
-        case "swift":
-            return "Swift Source"
-        case "js":
-            return "JavaScript"
-        case "ts":
-            return "TypeScript"
-        case "py":
-            return "Python Script"
-        case "rb":
-            return "Ruby Script"
-        case "go":
-            return "Go Source"
-        case "rs":
-            return "Rust Source"
-        case "java":
-            return "Java Source"
-        case "c":
-            return "C Source"
-        case "cpp", "cc":
-            return "C++ Source"
-        case "h":
-            return "C Header"
-        case "hpp":
-            return "C++ Header"
-        case "m":
-            return "Objective-C Source"
-        case "html", "htm":
-            return "HTML Document"
-        case "css":
-            return "CSS Stylesheet"
-        case "json":
-            return "JSON"
-        case "xml":
-            return "XML Document"
-        case "yaml", "yml":
-            return "YAML Document"
-        case "md", "markdown":
-            return "Markdown Document"
-        case "txt":
-            return "Plain Text"
-        case "pdf":
-            return "PDF Document"
-        case "png":
-            return "PNG Image"
-        case "jpg", "jpeg":
-            return "JPEG Image"
-        case "gif":
-            return "GIF Image"
-        case "svg":
-            return "SVG Image"
-        case "mp4":
-            return "MPEG-4 Movie"
-        case "mov":
-            return "QuickTime Movie"
-        case "mp3":
-            return "MP3 Audio"
-        case "wav":
-            return "WAV Audio"
-        case "zip":
-            return "ZIP Archive"
-        case "tar":
-            return "TAR Archive"
-        case "gz", "gzip":
-            return "Gzip Archive"
-        case "dmg":
-            return "Disk Image"
-        case "app":
-            return "Application"
-        case "xcodeproj":
-            return "Xcode Project"
-        case "xcworkspace":
-            return "Xcode Workspace"
-        default:
-            break
-        }
-
-        // Fallback to general type
-        switch file.fileType {
-        case .directory:
-            return "Folder"
-        case .text:
-            return "Plain Text"
-        case .code:
-            return "Source Code"
-        case .image:
-            return "Image"
-        case .video:
-            return "Movie"
-        case .audio:
-            return "Audio"
-        case .archive:
-            return "Archive"
-        case .document:
-            return "Document"
-        case .spreadsheet:
-            return "Spreadsheet"
-        case .presentation:
-            return "Presentation"
-        case .pdf:
-            return "PDF Document"
-        case .executable:
-            return "Unix Executable"
-        case .configuration:
-            return "Configuration"
-        case .unknown:
-            if file.fileExtension.isEmpty {
-                return "Document"
-            }
-            return "Document"
-        }
+        return fileTypeDescriptions[file.fileType] ?? "Document"
     }
 
     /// Groups files by their type

@@ -12,6 +12,8 @@ related_files:
   - MacSCP/Features/Commander/Components/CommanderServersPaneView.swift
   - MacSCP/Features/Commander/Components/CommanderTransfersPopover.swift
   - MacSCP/Features/Commander/Components/NativeServersTableView.swift
+  - MacSCP/Features/Commander/Components/NativeServersTableView+ContextMenu.swift
+  - MacSCP/Features/Commander/Components/ServerTableCellViews.swift
 related_debt:
   - docs/technical-debt.md#12-race-condition--rò-rỉ-session-ở-commanderviewmodel
   - docs/technical-debt.md#16-rủi-ro-crash-từ-fatalerror--force-unwrap

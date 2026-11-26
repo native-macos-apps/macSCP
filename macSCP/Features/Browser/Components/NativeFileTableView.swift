@@ -8,7 +8,6 @@
 
 import SwiftUI
 import AppKit
-import UniformTypeIdentifiers
 
 // MARK: - Tree Node
 
@@ -24,39 +23,6 @@ final class FileTreeNode {
     }
 
     var isExpandable: Bool { file.isDirectory }
-}
-
-// MARK: - NativeFileTableView
-
-// MARK: - Drag & Drop Payload
-
-struct DraggedItemPayload: Codable {
-    let sourcePosition: String
-    let file: RemoteFile
-}
-
-final class MacSCPFilePromiseProvider: NSFilePromiseProvider {
-    var payloadData: Data?
-    var localURL: URL?
-
-    override func writableTypes(for pasteboard: NSPasteboard) -> [NSPasteboard.PasteboardType] {
-        var types = super.writableTypes(for: pasteboard)
-        types.append(NativeFileTableView.macSCPDragType)
-        if localURL != nil {
-            types.append(.fileURL)
-        }
-        return types
-    }
-
-    override func pasteboardPropertyList(forType type: NSPasteboard.PasteboardType) -> Any? {
-        if type == NativeFileTableView.macSCPDragType {
-            return payloadData
-        }
-        if type == .fileURL, let localURL = localURL {
-            return localURL.absoluteString
-        }
-        return super.pasteboardPropertyList(forType: type)
-    }
 }
 
 // MARK: - NativeFileTableView
@@ -169,7 +135,7 @@ struct NativeFileTableView: NSViewRepresentable {
         outlineView.contextMenuDelegate = context.coordinator
 
         // ── ScrollView ─────────────────────────────────────────────────────────
-        scrollView.documentView      = outlineView
+        scrollView.documentView          = outlineView
         scrollView.hasVerticalScroller   = true
         scrollView.hasHorizontalScroller = true
         scrollView.autohidesScrollers    = true
@@ -235,9 +201,7 @@ struct NativeFileTableView: NSViewRepresentable {
     @MainActor
     class Coordinator: NSObject,
                        NSOutlineViewDataSource,
-                       NSOutlineViewDelegate,
-                       NSFilePromiseProviderDelegate,
-                       ContextMenuOutlineViewDelegate {
+                       NSOutlineViewDelegate {
 
         var viewModel: FileBrowserViewModel
         var files: [RemoteFile]
@@ -255,8 +219,8 @@ struct NativeFileTableView: NSViewRepresentable {
         /// Top-level nodes mirroring viewModel.sortedFiles
         var rootNodes: [FileTreeNode] = []
 
-        private var draggedFiles: [RemoteFile] = []
-        private let filePromiseQueue = OperationQueue()
+        var draggedFiles: [RemoteFile] = []
+        let filePromiseQueue = OperationQueue()
 
         init(
             viewModel: FileBrowserViewModel,
@@ -278,7 +242,7 @@ struct NativeFileTableView: NSViewRepresentable {
             self.panePosition             = panePosition
             self.transferToOtherPaneTitle = transferToOtherPaneTitle
             self.transferToOtherPaneIcon  = transferToOtherPaneIcon
-            self.onTransferToOtherPane     = onTransferToOtherPane
+            self.onTransferToOtherPane    = onTransferToOtherPane
             self.onDropRemoteFiles        = onDropRemoteFiles
             filePromiseQueue.qualityOfService = .userInitiated
         }
@@ -299,7 +263,7 @@ struct NativeFileTableView: NSViewRepresentable {
             }
         }
 
-        private func node(for item: Any?) -> FileTreeNode? {
+        func node(for item: Any?) -> FileTreeNode? {
             item as? FileTreeNode
         }
 
@@ -337,67 +301,73 @@ struct NativeFileTableView: NSViewRepresentable {
             guard let n = node(for: item) else { return nil }
             let file = n.file
             let columnId = tableColumn?.identifier.rawValue ?? ""
+            let cell = dequeueOrCreateCell(in: outlineView, columnId: columnId)
+            configureCell(cell, for: file, columnId: columnId)
+            return cell
+        }
+
+        private func dequeueOrCreateCell(in outlineView: NSOutlineView, columnId: String) -> NSTableCellView {
             let cellId = NSUserInterfaceItemIdentifier("OCell_\(columnId)")
-
-            var cell = outlineView.makeView(withIdentifier: cellId, owner: nil)
-                       as? NSTableCellView
-
-            if cell == nil {
-                cell = NSTableCellView()
-                cell?.identifier = cellId
-
-                let tf = NSTextField(labelWithString: "")
-                tf.translatesAutoresizingMaskIntoConstraints = false
-                tf.lineBreakMode = .byTruncatingTail
-                tf.font = .systemFont(ofSize: 12)
-                cell?.addSubview(tf)
-                cell?.textField = tf
-
-                if columnId == "name" {
-                    let iv = NSImageView()
-                    iv.translatesAutoresizingMaskIntoConstraints = false
-                    iv.imageScaling = .scaleProportionallyUpOrDown
-                    cell?.addSubview(iv)
-                    cell?.imageView = iv
-
-                    NSLayoutConstraint.activate([
-                        iv.leadingAnchor.constraint(equalTo: cell!.leadingAnchor, constant: 2),
-                        iv.centerYAnchor.constraint(equalTo: cell!.centerYAnchor),
-                        iv.widthAnchor.constraint(equalToConstant: 16),
-                        iv.heightAnchor.constraint(equalToConstant: 16),
-                        tf.leadingAnchor.constraint(equalTo: iv.trailingAnchor, constant: 5),
-                        tf.trailingAnchor.constraint(equalTo: cell!.trailingAnchor, constant: -4),
-                        tf.centerYAnchor.constraint(equalTo: cell!.centerYAnchor)
-                    ])
-                } else {
-                    NSLayoutConstraint.activate([
-                        tf.leadingAnchor.constraint(equalTo: cell!.leadingAnchor, constant: 4),
-                        tf.trailingAnchor.constraint(equalTo: cell!.trailingAnchor, constant: -4),
-                        tf.centerYAnchor.constraint(equalTo: cell!.centerYAnchor)
-                    ])
-                }
+            if let existing = outlineView.makeView(withIdentifier: cellId, owner: nil) as? NSTableCellView {
+                return existing
             }
 
-            switch columnId {
-            case "name":
-                cell?.textField?.stringValue = file.name
-                cell?.textField?.textColor   = .labelColor
-                cell?.imageView?.image       = FileTypeService.systemIcon(for: file)
-                cell?.imageView?.contentTintColor = nil
-            case "date":
-                cell?.textField?.stringValue = file.modificationDate?.fileListDisplayString ?? "--"
-                cell?.textField?.textColor   = .secondaryLabelColor
-            case "size":
-                cell?.textField?.stringValue = file.displaySize
-                cell?.textField?.textColor   = .secondaryLabelColor
-            case "kind":
-                cell?.textField?.stringValue = FileTypeService.typeDescription(for: file)
-                cell?.textField?.textColor   = .secondaryLabelColor
-            default:
-                break
+            let cell = NSTableCellView()
+            cell.identifier = cellId
+
+            let tf = NSTextField(labelWithString: "")
+            tf.translatesAutoresizingMaskIntoConstraints = false
+            tf.lineBreakMode = .byTruncatingTail
+            tf.font = .systemFont(ofSize: 12)
+            cell.addSubview(tf)
+            cell.textField = tf
+
+            if columnId == "name" {
+                let iv = NSImageView()
+                iv.translatesAutoresizingMaskIntoConstraints = false
+                iv.imageScaling = .scaleProportionallyUpOrDown
+                cell.addSubview(iv)
+                cell.imageView = iv
+
+                NSLayoutConstraint.activate([
+                    iv.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 2),
+                    iv.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+                    iv.widthAnchor.constraint(equalToConstant: 16),
+                    iv.heightAnchor.constraint(equalToConstant: 16),
+                    tf.leadingAnchor.constraint(equalTo: iv.trailingAnchor, constant: 5),
+                    tf.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -4),
+                    tf.centerYAnchor.constraint(equalTo: cell.centerYAnchor)
+                ])
+            } else {
+                NSLayoutConstraint.activate([
+                    tf.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 4),
+                    tf.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -4),
+                    tf.centerYAnchor.constraint(equalTo: cell.centerYAnchor)
+                ])
             }
 
             return cell
+        }
+
+        private func configureCell(_ cell: NSTableCellView, for file: RemoteFile, columnId: String) {
+            switch columnId {
+            case "name":
+                cell.textField?.stringValue = file.name
+                cell.textField?.textColor   = .labelColor
+                cell.imageView?.image       = FileTypeService.systemIcon(for: file)
+                cell.imageView?.contentTintColor = nil
+            case "date":
+                cell.textField?.stringValue = file.modificationDate?.fileListDisplayString ?? "--"
+                cell.textField?.textColor   = .secondaryLabelColor
+            case "size":
+                cell.textField?.stringValue = file.displaySize
+                cell.textField?.textColor   = .secondaryLabelColor
+            case "kind":
+                cell.textField?.stringValue = FileTypeService.typeDescription(for: file)
+                cell.textField?.textColor   = .secondaryLabelColor
+            default:
+                break
+            }
         }
 
         /// Row height — match Finder list view (20 pt content + 1 pt spacing).
@@ -430,14 +400,11 @@ struct NativeFileTableView: NSViewRepresentable {
                 n.isLoading = false
 
                 ov.reloadItem(n, reloadChildren: true)
-                // NSOutlineView will finish the expand automatically because
-                // numberOfChildrenOfItem now returns the correct count.
             }
         }
 
         func outlineViewItemDidCollapse(_ notification: Notification) {
             // Keep children cached so re-expanding is instant.
-            // If you want to force-reload on next expand, set n.children = nil here.
         }
 
         // ── Selection ─────────────────────────────────────────────────────────
@@ -482,156 +449,6 @@ struct NativeFileTableView: NSViewRepresentable {
             guard let n = sender.item(atRow: row) as? FileTreeNode else { return }
             onDoubleClick(n.file)
         }
-
-        // MARK: - Drag OUT (File Promise)
-
-        func outlineView(_ outlineView: NSOutlineView,
-                         pasteboardWriterForItem item: Any) -> NSPasteboardWriting? {
-            guard let n = node(for: item) else { return nil }
-            let file = n.file
-
-            let utType = file.isDirectory ? UTType.folder.identifier : UTType.data.identifier
-            let provider = MacSCPFilePromiseProvider(fileType: utType, delegate: self)
-            provider.userInfo = ["file": file]
-
-            let payload = DraggedItemPayload(
-                sourcePosition: panePosition?.rawValue ?? "",
-                file: file
-            )
-            provider.payloadData = try? JSONEncoder().encode(payload)
-
-            if viewModel.isLocal {
-                provider.localURL = URL(fileURLWithPath: file.path)
-            }
-
-            return provider
-        }
-
-        func outlineView(_ outlineView: NSOutlineView,
-                         draggingSession session: NSDraggingSession,
-                         willBeginAt screenPoint: NSPoint,
-                         forItems draggedItems: [Any]) {
-            draggedFiles = draggedItems.compactMap { ($0 as? FileTreeNode)?.file }
-        }
-
-        func outlineView(_ outlineView: NSOutlineView,
-                         draggingSession session: NSDraggingSession,
-                         endedAt screenPoint: NSPoint,
-                         operation: NSDragOperation) {
-            draggedFiles = []
-        }
-
-        // MARK: NSFilePromiseProviderDelegate
-
-        func filePromiseProvider(_ p: NSFilePromiseProvider,
-                                 fileNameForType type: String) -> String {
-            (p.userInfo as? [String: Any]).flatMap { $0["file"] as? RemoteFile }?.name ?? "file"
-        }
-
-        func filePromiseProvider(_ p: NSFilePromiseProvider,
-                                 writePromiseTo url: URL,
-                                 completionHandler: @escaping (Error?) -> Void) {
-            guard let file = (p.userInfo as? [String: Any])?["file"] as? RemoteFile else {
-                completionHandler(nil); return
-            }
-            Task { @MainActor in
-                do {
-                    if file.isDirectory {
-                        try await RemoteStreamTransferEngine.transfer(
-                            file: file,
-                            from: viewModel.fileRepository,
-                            to: LocalFileRepository(),
-                            targetDirectory: url.deletingLastPathComponent().path
-                        )
-                    } else {
-                        try await viewModel.downloadFileToURL(file, destinationURL: url)
-                    }
-                    completionHandler(nil)
-                } catch {
-                    completionHandler(error)
-                }
-            }
-        }
-
-        func operationQueue(for p: NSFilePromiseProvider) -> OperationQueue {
-            filePromiseQueue
-        }
-
-        // MARK: - Drop IN (Upload & Inter-Pane Transfer)
-
-        func outlineView(_ outlineView: NSOutlineView,
-                         validateDrop info: NSDraggingInfo,
-                         proposedItem item: Any?,
-                         proposedChildIndex index: Int) -> NSDragOperation {
-            // Do not drop onto the same outline view
-            if info.draggingSource as? NSOutlineView == outlineView {
-                return []
-            }
-
-            // Inter-pane drag (macSCPDragType)
-            if info.draggingPasteboard.types?.contains(NativeFileTableView.macSCPDragType) == true {
-                outlineView.setDropItem(nil, dropChildIndex: NSOutlineViewDropOnItemIndex)
-                return .copy
-            }
-
-            // Drop from Finder or external apps
-            if info.draggingPasteboard.canReadObject(
-                forClasses: [NSURL.self],
-                options: [.urlReadingFileURLsOnly: true]) {
-                outlineView.setDropItem(nil, dropChildIndex: NSOutlineViewDropOnItemIndex)
-                return .copy
-            }
-
-            return []
-        }
-
-        func outlineView(_ outlineView: NSOutlineView,
-                         acceptDrop info: NSDraggingInfo,
-                         item: Any?,
-                         childIndex index: Int) -> Bool {
-            let pb = info.draggingPasteboard
-
-            // 1. Inter-pane drag within macSCP
-            if pb.types?.contains(NativeFileTableView.macSCPDragType) == true,
-               let items = pb.pasteboardItems {
-                var droppedFiles: [RemoteFile] = []
-                var sourcePosition: PanePosition?
-
-                for pbItem in items {
-                    if let data = pbItem.data(forType: NativeFileTableView.macSCPDragType),
-                       let payload = try? JSONDecoder().decode(DraggedItemPayload.self, from: data) {
-                        droppedFiles.append(payload.file)
-                        if sourcePosition == nil, let pos = PanePosition(rawValue: payload.sourcePosition) {
-                            sourcePosition = pos
-                        }
-                    }
-                }
-
-                if !droppedFiles.isEmpty {
-                    onDropRemoteFiles?(droppedFiles, sourcePosition)
-                    return true
-                }
-            }
-
-            // 2. Drop from Finder or external apps
-            if let urls = pb.readObjects(
-                forClasses: [NSURL.self],
-                options: [.urlReadingFileURLsOnly: true]) as? [URL] {
-                let valid = urls.filter { url in
-                    var isDir: ObjCBool = false
-                    return FileManager.default.fileExists(atPath: url.path,
-                                                          isDirectory: &isDir)
-                }
-                guard !valid.isEmpty else { return false }
-
-                Task { @MainActor in
-                    await viewModel.uploadDroppedFiles(valid)
-                }
-                return true
-            }
-
-            return false
-        }
     }
 }
 
@@ -641,190 +458,5 @@ private extension RemoteFile {
     static var placeholder: RemoteFile {
         RemoteFile(name: "", path: "", isDirectory: false,
                    size: 0, permissions: "")
-    }
-}
-
-// MARK: - Context Menu Support
-
-extension NativeFileTableView.Coordinator {
-
-    func targetFiles(for row: Int) -> [RemoteFile] {
-        guard let ov = outlineView else { return [] }
-        if ov.selectedRowIndexes.contains(row) {
-            let files = ov.selectedRowIndexes.compactMap { (ov.item(atRow: $0) as? FileTreeNode)?.file }
-            if !files.isEmpty {
-                return files
-            }
-        }
-        if let n = ov.item(atRow: row) as? FileTreeNode {
-            return [n.file]
-        }
-        return []
-    }
-
-    func contextMenu(for row: Int) -> NSMenu? {
-        guard let ov = outlineView,
-              let n = ov.item(atRow: row) as? FileTreeNode else { return nil }
-        let file = n.file
-        let targetFiles = self.targetFiles(for: row)
-        let isMultiple = targetFiles.count > 1
-
-        let menu = NSMenu()
-
-        if !isMultiple && file.isFile {
-            addItem(menu, title: "Open in Editor",
-                    action: #selector(handleOpenInEditor(_:)),
-                    image: "pencil.and.outline", object: file)
-            if viewModel.connection.connectionType == .s3 {
-                menu.addItem(.separator())
-                addItem(menu, title: "Copy URL",
-                        action: #selector(handleCopyURL(_:)),
-                        image: "link", object: file)
-                addItem(menu, title: "Copy Presigned URL",
-                        action: #selector(handleCopyPresignedURL(_:)),
-                        image: "timer", object: file)
-            }
-            menu.addItem(.separator())
-        }
-
-        let copyTitle = isMultiple ? "Copy \(targetFiles.count) Items" : "Copy"
-        let cutTitle  = isMultiple ? "Cut \(targetFiles.count) Items" : "Cut"
-        addItem(menu, title: copyTitle, action: #selector(handleCopy(_:)), image: "doc.on.doc",  object: targetFiles)
-        addItem(menu, title: cutTitle,  action: #selector(handleCut(_:)),  image: "scissors",    object: targetFiles)
-
-        if viewModel.canPaste {
-            addItem(menu, title: "Paste", action: #selector(handlePaste(_:)), image: "doc.on.clipboard", object: file)
-        }
-        if let transferTitle = transferToOtherPaneTitle, onTransferToOtherPane != nil {
-            menu.addItem(.separator())
-            let title = isMultiple ? "\(transferTitle) (\(targetFiles.count))" : transferTitle
-            addItem(menu, title: title,
-                    action: #selector(handleTransferToOtherPane(_:)),
-                    image: transferToOtherPaneIcon,
-                    object: targetFiles)
-        }
-
-        if !isMultiple {
-            menu.addItem(.separator())
-            addItem(menu, title: "Rename",   action: #selector(handleRename(_:)),   image: "pencil",        object: file)
-            addItem(menu, title: "Get Info", action: #selector(handleGetInfo(_:)),  image: "info.circle",   object: file)
-        }
-
-        if !isMultiple && file.isFile {
-            menu.addItem(.separator())
-            addItem(menu, title: "Download", action: #selector(handleDownload(_:)), image: "arrow.down.circle", object: file)
-        }
-
-        menu.addItem(.separator())
-        let deleteTitle = isMultiple ? "Delete \(targetFiles.count) Items" : "Delete"
-        addItem(menu, title: deleteTitle, action: #selector(handleDelete(_:)), image: "trash", object: targetFiles)
-
-        return menu
-    }
-
-    private func addItem(_ menu: NSMenu,
-                         title: String,
-                         action: Selector,
-                         image: String,
-                         object: Any?) {
-        let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
-        item.target = self
-        item.representedObject = object
-        item.image = NSImage(systemSymbolName: image, accessibilityDescription: nil)
-        menu.addItem(item)
-    }
-
-    @objc func handleOpenInEditor(_ s: NSMenuItem) {
-        (s.representedObject as? RemoteFile).map { onOpenEditor?($0) }
-    }
-    @objc func handleCopyURL(_ s: NSMenuItem) {
-        guard let f = s.representedObject as? RemoteFile else { return }
-        Task { @MainActor in await viewModel.copyS3ObjectURL(for: f) }
-    }
-    @objc func handleCopyPresignedURL(_ s: NSMenuItem) {
-        guard let f = s.representedObject as? RemoteFile else { return }
-        Task { @MainActor in await viewModel.copyS3PresignedURL(for: f, expiresIn: 600) }
-    }
-    @objc func handleCopy(_ s: NSMenuItem) {
-        if let files = s.representedObject as? [RemoteFile], !files.isEmpty {
-            viewModel.copyFiles(files)
-        } else if let file = s.representedObject as? RemoteFile {
-            viewModel.copyFiles([file])
-        }
-    }
-    @objc func handleCut(_ s: NSMenuItem) {
-        if let files = s.representedObject as? [RemoteFile], !files.isEmpty {
-            viewModel.cutFiles(files)
-        } else if let file = s.representedObject as? RemoteFile {
-            viewModel.cutFiles([file])
-        }
-    }
-    @objc func handlePaste(_ s: NSMenuItem) {
-        Task { @MainActor in await viewModel.paste() }
-    }
-    @objc func handleTransferToOtherPane(_ s: NSMenuItem) {
-        let files: [RemoteFile]
-        if let list = s.representedObject as? [RemoteFile], !list.isEmpty {
-            files = list
-        } else if let file = s.representedObject as? RemoteFile {
-            files = [file]
-        } else {
-            return
-        }
-        viewModel.selectedFiles = Set(files.map { $0.id })
-        if let first = files.first {
-            onTransferToOtherPane?(first)
-        }
-    }
-    @objc func handleRename(_ s: NSMenuItem) {
-        (s.representedObject as? RemoteFile).map { viewModel.startRename($0) }
-    }
-    @objc func handleGetInfo(_ s: NSMenuItem) {
-        (s.representedObject as? RemoteFile).map { onGetInfo($0) }
-    }
-    @objc func handleDownload(_ s: NSMenuItem) {
-        guard let f = s.representedObject as? RemoteFile else { return }
-        Task { @MainActor in await viewModel.downloadFile(f) }
-    }
-    @objc func handleDelete(_ s: NSMenuItem) {
-        if let files = s.representedObject as? [RemoteFile], !files.isEmpty {
-            viewModel.confirmDelete(files)
-        } else if let file = s.representedObject as? RemoteFile {
-            viewModel.confirmDelete([file])
-        }
-    }
-}
-
-// MARK: - ContextMenuOutlineView
-
-protocol ContextMenuOutlineViewDelegate: AnyObject {
-    func contextMenu(for row: Int) -> NSMenu?
-}
-
-class ContextMenuOutlineView: NSOutlineView {
-    weak var contextMenuDelegate: ContextMenuOutlineViewDelegate?
-
-    override func menu(for event: NSEvent) -> NSMenu? {
-        let point = convert(event.locationInWindow, from: nil)
-        let row = self.row(at: point)
-        if row >= 0 {
-            if !selectedRowIndexes.contains(row) {
-                selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
-            }
-            return contextMenuDelegate?.contextMenu(for: row)
-        }
-        return super.menu(for: event)
-    }
-
-    override func keyDown(with event: NSEvent) {
-        // Cmd+Delete (keyCode 51 is Backspace on Mac) or forward delete (keyCode 117)
-        if (event.keyCode == 51 && event.modifierFlags.contains(.command)) || event.keyCode == 117 {
-            let files = selectedRowIndexes.compactMap { (item(atRow: $0) as? FileTreeNode)?.file }
-            if !files.isEmpty {
-                (contextMenuDelegate as? NativeFileTableView.Coordinator)?.viewModel.confirmDelete(files)
-                return
-            }
-        }
-        super.keyDown(with: event)
     }
 }
