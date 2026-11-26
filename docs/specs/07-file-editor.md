@@ -86,4 +86,4 @@ Cho phép người dùng mở và chỉnh sửa trực tiếp các file văn b�
 ---
 
 ## 8. Known Gaps & Technical Debt
-- **P0 — Nguy cơ mất dữ liệu với file non-UTF-8:** `SFTPSession.readFileContent` (L373) đang fallback về `""` khi không decode được UTF-8; nếu người dùng bấm Save sẽ ghi đè rỗng file gốc (`docs/technical-debt.md#1.4`).
+- ~~**P0 — Nguy cơ mất dữ liệu với file non-UTF-8**~~ (Đã xử lý — 2026-11-26: `SFTPSession`, `S3Session`, và `LocalFileRepository` đều throw `AppError.invalidFileEncoding` khi file không phải UTF-8 hợp lệ).

@@ -95,5 +95,5 @@ Gồm 4 tab (`SettingsTab`):
 ---
 
 ## 8. Known Gaps & Technical Debt
-- **P0 — Bug Inactivity Lock:** `recordActivity()` hiện chỉ được gọi từ `NSApplication.didBecomeActiveNotification`, chưa theo dõi tương tác chuột/bàn phím trong ứng dụng nên người dùng làm việc liên tục vẫn bị khóa khi hết timeout (`docs/technical-debt.md#1.5`).
-- **P2 — Khó unit test:** `AppLockManager.init(biometricService:)` đang là `private`, cần mở thành `internal` để test với mock (`docs/technical-debt.md#2.3`).
+- ~~**P0 — Bug Inactivity Lock:** `recordActivity()` chỉ được gọi từ `NSApplication.didBecomeActiveNotification`~~ (Đã xử lý — 2026-11-26: gắn `NSEvent.addLocalMonitorForEvents` cho keyboard/mouse/scroll có throttle 5s và dọn dẹp trong `deinit`).
+- ~~**P2 — Khó unit test:** `AppLockManager.init(biometricService:)` đang là `private`~~ (Đã xử lý — 2026-11-26: mở `internal init` và bổ sung unit tests).

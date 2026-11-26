@@ -98,7 +98,7 @@ Cung cấp tầng kết nối SSHv2 & SFTP thuần Swift dựa trên **Apple `sw
 ---
 
 ## 8. Known Gaps & Technical Debt
-- **P0 — `SFTPStreamReader` data race:** Đang khai báo `@unchecked Sendable` với state mutable không lock (`docs/technical-debt.md#1.3`).
-- **P0 — Non-UTF-8 silent data loss:** `SFTPSession.readFileContent` (L373) trả về `""` khi decode UTF-8 thất bại thay vì throw lỗi (`docs/technical-debt.md#1.4`).
+- ~~**P0 — `SFTPStreamReader` data race**~~ (Đã xử lý — 2026-11-26: chuyển sang `actor`).
+- ~~**P0 — Non-UTF-8 silent data loss:** `SFTPSession.readFileContent`~~ (Đã xử lý — 2026-11-26: throw `AppError.invalidFileEncoding`).
 - **P1/P2 — Dead code & giới hạn parser:** `AcceptAllServerAuthDelegate` vẫn tồn tại trong `SSHKeyAuth.swift`; `SSHKeyParser` hiện chỉ parse `ssh-ed25519` không mã hóa và bỏ qua `passphrase` dù thông báo đề cập P-256 (`docs/technical-debt.md#3.2`).
 - **P1 — Trùng lặp connect:** Hai overload `connect` trong `SFTPSession.swift` lặp logic khởi tạo/cleanup (`docs/technical-debt.md#3.1`).

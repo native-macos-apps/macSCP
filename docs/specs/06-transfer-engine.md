@@ -88,7 +88,7 @@ related_debt:
 ---
 
 ## 8. Known Gaps & Technical Debt
-- **P0 — `CancellationBox` data race:** `cancelAction` ghi/đọc giữa worker task và MainActor không có lock (`docs/technical-debt.md#1.3`).
+- ~~**P0 — `CancellationBox` data race**~~ (Đã xử lý — 2026-11-26: thay bằng `OSAllocatedUnfairLock` lưu `CancellationState`).
 - **P1 — Trùng lặp Batch state & thiếu sequence guard:** Logic batch state lặp lại giữa `FileBrowserViewModel` và `CommanderViewModel`; `CommanderViewModel.applyBatchSnapshot` chưa kiểm tra `lastAppliedSnapshotSequence` (`docs/technical-debt.md#3.1`).
 - **P1 — Hardcode `transferType: .upload`:** Trong `BatchTransferCoordinator.swift` (L139, L200) kể cả khi Commander đang download (`docs/technical-debt.md#3.3`).
 - **P2 — Nuốt thao tác khi batch đang chạy & inconsistent `recentTransfers` limit:** Giới hạn lịch sử lẫn lộn giữa 10 và 30; kéo thả batch mới khi đang chạy bị bỏ qua im lặng (`docs/technical-debt.md#3.3`).

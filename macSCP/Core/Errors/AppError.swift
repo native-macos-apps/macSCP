@@ -46,6 +46,7 @@ enum AppError: LocalizedError, Sendable, Equatable {
     case uploadFailed(String)
     case fileReadFailed
     case fileWriteFailed
+    case invalidFileEncoding
     // Terminal errors
     case terminalError(String)
 
@@ -118,6 +119,8 @@ enum AppError: LocalizedError, Sendable, Equatable {
             return "Failed to read file"
         case .fileWriteFailed:
             return "Failed to write file"
+        case .invalidFileEncoding:
+            return "Cannot open file: unsupported text encoding (not valid UTF-8)."
         case .terminalError(let message):
             return message
 
@@ -154,6 +157,8 @@ enum AppError: LocalizedError, Sendable, Equatable {
             return "Use a Mac with Touch ID or pair an Apple Watch to enable biometric authentication."
         case .biometricAuthFailed:
             return "Please try again or use your system password."
+        case .invalidFileEncoding:
+            return "Only UTF-8 encoded text files can be edited in the built-in editor. Download the file to open it with an external editor."
         default:
             return nil
         }

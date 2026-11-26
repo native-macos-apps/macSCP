@@ -20,41 +20,25 @@ Tuy nhiên, quá trình phát triển tích lũy một số khoản nợ kỹ th
 ### 1.1. ~~Bảo mật & Rò rỉ Private Key trong `TerminalLauncher`~~ (Đã xử lý — 2026-11-26)
 * **Giải pháp đã triển khai:** Xóa bỏ hoàn toàn `TerminalLauncher.swift`, quyền Apple Events (`com.apple.security.temporary-exception.apple-events`) và `NSAppleEventsUsageDescription`. Thay thế bằng cửa sổ **Integrated SSH Terminal** (`macSCP/Features/Terminal/`, `SSHTerminalSession`, `SSHConnection.connectShell`) dùng `SwiftTerm` + `swift-nio-ssh`: private key được parse trực tiếp trong RAM (zero-disk), host key được xác thực qua `KnownHostsManager`, và `initialPath` được escape chuẩn POSIX single-quote (xem `SPEC-08` và `docs/plans/2026112601-integrated-swiftterm-terminal.md`).
 
-### 1.2. Race Condition & Rò rỉ Session ở `CommanderViewModel`
-* **Vị trí:** `macSCP/Features/Commander/CommanderViewModel.swift` (L238–L269, L329–L353)
-* **Vấn đề:**
-  * `switchToLocal` (L240–L248): Tạo `Task { await targetPane.browserViewModel?.disconnect() }` nhưng gán đồng bộ `targetPane.browserViewModel = localVM` ngay sau đó. Khi `Task` chạy, nó sẽ **disconnect nhầm `localVM` mới tạo** thay vì session remote cũ.
-  * `switchToServers` (L257–L264): Gán `targetPane.browserViewModel = nil` trước khi `Task` chạy khiến `disconnect()` thành no-op, rò rỉ kết nối SFTP/S3 cũ.
-  * `completeConnect` (L329–L353): Ghi đè `targetPane.browserViewModel` mà không ngắt kết nối session đang hoạt động trước đó.
-* **Hướng xử lý:** Capture `let previousVM = targetPane.browserViewModel` trước khi cập nhật `targetPane`, sau đó gọi `Task { await previousVM?.disconnect() }`.
+### 1.2. ~~Race Condition & Rò rỉ Session ở `CommanderViewModel`~~ (Đã xử lý — 2026-11-26)
+* **Giải pháp đã triển khai:** Capture `previousRemoteVM` qua `detachRemoteViewModel(from:)` trước khi cập nhật `targetPane.contentType` / `targetPane.browserViewModel` trong `switchToLocal`, `switchToServers`, `disconnect`, và `completeConnect` (`CommanderViewModel.swift`). Đã bổ sung unit tests xác nhận session cũ được disconnect đúng và session mới không bị ngắt nhầm.
 
-### 1.3. Lạm dụng `@unchecked Sendable` & Data Races (29 vị trí)
-* **Vị trí:**
-  * `macSCP/Services/TransferCoordinator/BatchTransferCoordinator.swift` (L208–L240 — `CancellationBox`)
-  * `macSCP/Data/SFTP/SFTPSession.swift` (L531–L560 — `SFTPStreamReader`)
-  * `macSCP/Data/S3/S3Session.swift` (L1212–L1249 — `S3StreamReader`)
-  * `macSCP/Data/Repositories/LocalFileRepository.swift` (L313–L336 — `LocalFileStreamReader`)
-* **Vấn đề:**
-  * `CancellationBox.cancelAction` bị ghi ở worker task và đọc từ `onCancel` trên MainActor không có lock — có nguy cơ crash `EXC_BAD_ACCESS`.
-  * Cả 3 `StreamReader` đều khai báo `@unchecked Sendable` với thuộc tính mutable (`isClosed`, `offset`, `dataOffset`) không có lock hoặc actor, trong khi `CommanderViewModel.executeCommanderBatch` (L527–L531) gọi `Task { await reader.close() }` bất đồng bộ trong `defer`.
-* **Hướng xử lý:** Chuyển 3 `StreamReader` sang `actor` (hoặc bảo vệ state bằng `OSAllocatedUnfairLock`/`NSLock`) và bọc lock cho `CancellationBox`.
+### 1.3. ~~Lạm dụng `@unchecked Sendable` & Data Races (29 vị trí)~~ (Đã xử lý các điểm nóng P0 — 2026-11-26)
+* **Giải pháp đã triển khai:**
+  * Thay `CancellationBox` và `ProgressState` (`@unchecked Sendable`) trong `BatchTransferCoordinator.swift` bằng `OSAllocatedUnfairLock` (`CancellationState` theo dõi cả `isCancelled` lẫn `cancelAction`) và biến local `itemIndex`.
+  * Chuyển toàn bộ 4 `FileStreamReader` (`SFTPStreamReader`, `S3StreamReader`, `LocalFileStreamReader`, `MemoryStreamReader`) sang `actor`, loại bỏ hoàn toàn `@unchecked Sendable` và data race khi `readNextChunk()` / `close()` chạy đồng thời.
 
-### 1.4. Mất dữ liệu âm thầm khi đọc file non-UTF-8
-* **Vị trí:** `macSCP/Data/SFTP/SFTPSession.swift` (L373)
-* **Vấn đề:** `String(data: allData, encoding: .utf8) ?? ""` trả về chuỗi rỗng nếu file không phải UTF-8 hợp lệ. Người dùng mở file trong editor rồi bấm lưu có thể ghi đè làm mất toàn bộ nội dung file gốc.
-* **Hướng xử lý:** Throw lỗi rõ ràng (vd. `AppError.invalidFileEncoding`) hoặc hỗ trợ fallback encoding có cảnh báo người dùng.
+### 1.4. ~~Mất dữ liệu âm thầm khi đọc file non-UTF-8~~ (Đã xử lý — 2026-11-26)
+* **Giải pháp đã triển khai:** Bổ sung `AppError.invalidFileEncoding` (`AppError.swift`) và kiểm tra strict UTF-8 trong `SFTPSession.readFileContent`, `S3Session.readFileContent` và `LocalFileRepository.readFileContent`; throw `AppError.invalidFileEncoding` thay vì trả về `""` hay decode lossy `U+FFFD`, ngăn ghi đè mất dữ liệu gốc.
 
-### 1.5. Bug Inactivity Lock ở `AppLockManager`
-* **Vị trí:** `macSCP/Services/AppLockManager.swift` (L173–L176, L257–L266)
-* **Vấn đề:** `recordActivity()` chỉ được gọi từ `NSApplication.didBecomeActiveNotification`, không theo dõi tương tác chuột/bàn phím trong ứng dụng. Người dùng làm việc liên tục vẫn bị khóa app khi hết thời gian `inactivityTimeout`.
-* **Hướng xử lý:** Đăng ký `NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .leftMouseDown, .rightMouseDown, .scrollWheel])` (có throttle) để reset timer khi có thao tác thật.
+### 1.5. ~~Bug Inactivity Lock ở `AppLockManager`~~ (Đã xử lý — 2026-11-26)
+* **Giải pháp đã triển khai:** Đăng ký `NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .leftMouseDown, .rightMouseDown, .scrollWheel])` với cơ chế throttle (`5s`) qua `handleUserInteraction(now:)`, dọn dẹp observers/monitor trong `deinit`, và mở `internal init(biometricService:userDefaults:activityThrottleInterval:installObservers:)` để unit test độc lập.
 
-### 1.6. Rủi ro Crash từ `fatalError()` & Force Unwrap
-* **Vị trí:**
-  * `macSCP/Data/SwiftData/DataStore.swift` (L38): `fatalError("Failed to create ModelContainer: \(error)")`
-  * `macSCP/Features/Commander/Components/NativeServersTableView.swift` (L197): `guard let node = item as? ServerOutlineNode else { fatalError() }`
-  * `macSCP/Data/S3/S3Session.swift` (L64, L67): Force unwrap `s3!` thay vì dùng biến local vừa khởi tạo.
-* **Hướng xử lý:** Bổ sung fallback in-memory store + thông báo lỗi người dùng ở `DataStore`; thay `s3!` bằng biến local; xử lý an toàn thay vì `fatalError()` ở `NativeServersTableView`.
+### 1.6. ~~Rủi ro Crash từ `fatalError()` & Force Unwrap~~ (Đã xử lý — 2026-11-26)
+* **Giải pháp đã triển khai:**
+  * `DataStore.swift`: Bổ sung fallback in-memory `ModelContainer`, lưu `isUsingInMemoryFallback` / `initializationError`, hiển thị cảnh báo cho người dùng tại `CommanderWorkspaceView`, và cập nhật `DataStore.preview` dùng `inMemoryOnly: true`.
+  * `NativeServersTableView.swift`: Thay `fatalError()` trong `outlineView(_:child:ofItem:)` bằng kiểm tra kiểu + biên mảng an toàn, ghi log lỗi và trả về `NSNull()`.
+  * `S3Session.swift`: Thay force unwrap `s3!` bằng biến local `let client = S3Client(config: configuration)`.
 
 ---
 
@@ -143,11 +127,11 @@ Tuy nhiên, quá trình phát triển tích lũy một số khoản nợ kỹ th
 
 ### P0 — Sửa ngay (Bảo mật, Bug runtime & Data Races)
 - [x] ~~Fix shell/AppleScript escaping và tạo/dọn dẹp an toàn file private key tạm trong `TerminalLauncher.swift`.~~ (Thay thế hoàn toàn bằng Integrated SSH Terminal với `SwiftTerm` + `swift-nio-ssh`)
-- [ ] Fix race condition & rò rỉ session trong `CommanderViewModel` (`switchToLocal`, `switchToServers`, `completeConnect`).
-- [ ] Đồng bộ hóa an toàn (`actor` hoặc lock) cho `CancellationBox`, `SFTPStreamReader`, `S3StreamReader`, `LocalFileStreamReader`.
-- [ ] Throw lỗi encoding thay vì trả về `""` trong `SFTPSession.readFileContent`.
-- [ ] Gắn sự kiện tương tác người dùng cho `AppLockManager.recordActivity()`.
-- [ ] Loại bỏ `fatalError()` ở `DataStore.swift` / `NativeServersTableView.swift` và force unwrap `s3!` ở `S3Session.swift`.
+- [x] ~~Fix race condition & rò rỉ session trong `CommanderViewModel` (`switchToLocal`, `switchToServers`, `completeConnect`).~~ (2026-11-26)
+- [x] ~~Đồng bộ hóa an toàn (`actor` hoặc lock) cho `CancellationBox`, `SFTPStreamReader`, `S3StreamReader`, `LocalFileStreamReader`.~~ (2026-11-26 — thêm cả `MemoryStreamReader`)
+- [x] ~~Throw lỗi encoding thay vì trả về `""` trong `SFTPSession.readFileContent`.~~ (2026-11-26 — áp dụng `AppError.invalidFileEncoding` đồng nhất cho SFTP, S3 và Local)
+- [x] ~~Gắn sự kiện tương tác người dùng cho `AppLockManager.recordActivity()`.~~ (2026-11-26 — `NSEvent.addLocalMonitorForEvents` có throttle 5s)
+- [x] ~~Loại bỏ `fatalError()` ở `DataStore.swift` / `NativeServersTableView.swift` và force unwrap `s3!` ở `S3Session.swift`.~~ (2026-11-26)
 
 ### P1 — Giảm nợ Kiến trúc & Dọn dẹp
 - [ ] Tách `FileBrowserViewModel` thành `TransferManager` (dùng chung với `CommanderViewModel`), `QuickLookController` (dùng `NSCache` + `defer` xóa file tạm + không cache lỗi), và `FileOperationsService`.

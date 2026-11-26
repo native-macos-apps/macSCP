@@ -58,13 +58,14 @@ actor S3Session: S3SessionProtocol {
                 configuration.endpoint = normalizedEndpoint.absoluteString
                 configuration.forcePathStyle = true
             }
-            s3 = S3Client(config: configuration)
+            let client = S3Client(config: configuration)
+            s3 = client
 
             if normalizedBucket.isEmpty {
-                _ = try await s3!.listBuckets(input: ListBucketsInput())
+                _ = try await client.listBuckets(input: ListBucketsInput())
             } else {
                 let headBucketRequest = HeadBucketInput(bucket: normalizedBucket)
-                _ = try await s3!.headBucket(input: headBucketRequest)
+                _ = try await client.headBucket(input: headBucketRequest)
             }
 
             configuredBucketName = normalizedBucket
@@ -785,8 +786,12 @@ actor S3Session: S3SessionProtocol {
             }
 
             let data = try await body.readData() ?? Data()
-            let content = String(decoding: data, as: UTF8.self)
+            guard let content = String(data: data, encoding: .utf8) else {
+                throw AppError.invalidFileEncoding
+            }
             return content
+        } catch let appError as AppError {
+            throw appError
         } catch {
             throw parseS3Error(error)
         }
@@ -1209,7 +1214,7 @@ actor S3Session: S3SessionProtocol {
 
 // MARK: - S3StreamReader
 
-final class S3StreamReader: FileStreamReader, @unchecked Sendable {
+actor S3StreamReader: FileStreamReader {
     private let body: ByteStream
     private var dataOffset: Int = 0
     private let chunkSize: Int

@@ -5,6 +5,7 @@
 //  Manages app lock state and biometric authentication preferences
 //
 
+import AppKit
 import Foundation
 import SwiftUI
 
@@ -43,7 +44,7 @@ final class AppLockManager {
 
     private(set) var isBiometricLockEnabled: Bool = false {
         didSet {
-            UserDefaults.standard.set(isBiometricLockEnabled, forKey: Keys.biometricLockEnabled)
+            userDefaults.set(isBiometricLockEnabled, forKey: Keys.biometricLockEnabled)
             if !isBiometricLockEnabled {
                 isLocked = false
                 authenticationError = nil
@@ -55,16 +56,16 @@ final class AppLockManager {
     }
 
     var lockOnAppResume: Bool = false {
-        didSet { UserDefaults.standard.set(lockOnAppResume, forKey: Keys.lockOnAppResume) }
+        didSet { userDefaults.set(lockOnAppResume, forKey: Keys.lockOnAppResume) }
     }
 
     var lockBeforeConnection: Bool = false {
-        didSet { UserDefaults.standard.set(lockBeforeConnection, forKey: Keys.lockBeforeConnection) }
+        didSet { userDefaults.set(lockBeforeConnection, forKey: Keys.lockBeforeConnection) }
     }
 
     var lockAfterInactivity: Bool = false {
         didSet {
-            UserDefaults.standard.set(lockAfterInactivity, forKey: Keys.lockAfterInactivity)
+            userDefaults.set(lockAfterInactivity, forKey: Keys.lockAfterInactivity)
             if lockAfterInactivity {
                 resetInactivityTimer()
             } else {
@@ -75,7 +76,7 @@ final class AppLockManager {
 
     var inactivityTimeout: InactivityTimeout = .fiveMinutes {
         didSet {
-            UserDefaults.standard.set(inactivityTimeout.rawValue, forKey: Keys.inactivityTimeout)
+            userDefaults.set(inactivityTimeout.rawValue, forKey: Keys.inactivityTimeout)
             resetInactivityTimer()
         }
     }
@@ -83,9 +84,14 @@ final class AppLockManager {
     // MARK: - Dependencies
 
     private let biometricService: BiometricAuthServiceProtocol
+    private let userDefaults: UserDefaults
+    private let activityThrottleInterval: TimeInterval
     @ObservationIgnored private var backgroundObserver: Any?
     @ObservationIgnored private var activityObserver: Any?
+    @ObservationIgnored private var eventMonitor: Any?
     @ObservationIgnored private var inactivityTimer: Timer?
+    @ObservationIgnored private(set) var lastActivityDate: Date?
+    @ObservationIgnored private(set) var inactivityResetCount: Int = 0
 
     // MARK: - Constants
 
@@ -99,18 +105,40 @@ final class AppLockManager {
 
     // MARK: - Initialization
 
-    private init(biometricService: BiometricAuthServiceProtocol? = nil) {
+    init(
+        biometricService: BiometricAuthServiceProtocol? = nil,
+        userDefaults: UserDefaults = .standard,
+        activityThrottleInterval: TimeInterval = 5.0,
+        installObservers: Bool = true
+    ) {
         self.biometricService = biometricService ?? BiometricAuthService.shared
+        self.userDefaults = userDefaults
+        self.activityThrottleInterval = activityThrottleInterval
 
         // Load persisted preferences (didSet not called during init)
-        self.isBiometricLockEnabled = UserDefaults.standard.bool(forKey: Keys.biometricLockEnabled)
-        self.lockOnAppResume = UserDefaults.standard.bool(forKey: Keys.lockOnAppResume)
-        self.lockBeforeConnection = UserDefaults.standard.bool(forKey: Keys.lockBeforeConnection)
-        self.lockAfterInactivity = UserDefaults.standard.bool(forKey: Keys.lockAfterInactivity)
-        let rawTimeout = UserDefaults.standard.integer(forKey: Keys.inactivityTimeout)
+        self.isBiometricLockEnabled = userDefaults.bool(forKey: Keys.biometricLockEnabled)
+        self.lockOnAppResume = userDefaults.bool(forKey: Keys.lockOnAppResume)
+        self.lockBeforeConnection = userDefaults.bool(forKey: Keys.lockBeforeConnection)
+        self.lockAfterInactivity = userDefaults.bool(forKey: Keys.lockAfterInactivity)
+        let rawTimeout = userDefaults.integer(forKey: Keys.inactivityTimeout)
         self.inactivityTimeout = InactivityTimeout(rawValue: rawTimeout) ?? .fiveMinutes
 
-        setupObservers()
+        if installObservers {
+            setupObservers()
+        }
+    }
+
+    deinit {
+        inactivityTimer?.invalidate()
+        if let backgroundObserver {
+            NotificationCenter.default.removeObserver(backgroundObserver)
+        }
+        if let activityObserver {
+            NotificationCenter.default.removeObserver(activityObserver)
+        }
+        if let eventMonitor {
+            NSEvent.removeMonitor(eventMonitor)
+        }
     }
 
     // MARK: - Public Methods
@@ -170,9 +198,19 @@ final class AppLockManager {
     }
 
     /// Record user activity to reset the inactivity timer
-    func recordActivity() {
+    func recordActivity(now: Date = Date()) {
         guard isBiometricLockEnabled, lockAfterInactivity, !isLocked else { return }
+        lastActivityDate = now
         resetInactivityTimer()
+    }
+
+    /// Throttled handler for high-frequency local input events (keyboard, mouse, scroll)
+    func handleUserInteraction(now: Date = Date()) {
+        guard isBiometricLockEnabled, lockAfterInactivity, !isLocked else { return }
+        if let lastActivityDate, now.timeIntervalSince(lastActivityDate) < activityThrottleInterval {
+            return
+        }
+        recordActivity(now: now)
     }
 
     // MARK: - Private Methods
@@ -223,6 +261,7 @@ final class AppLockManager {
         cancelInactivityTimer()
         guard isBiometricLockEnabled, lockAfterInactivity, !isLocked else { return }
 
+        inactivityResetCount += 1
         let seconds = TimeInterval(inactivityTimeout.rawValue)
         inactivityTimer = Timer.scheduledTimer(withTimeInterval: seconds, repeats: false) { [weak self] _ in
             Task { @MainActor [weak self] in
@@ -253,7 +292,7 @@ final class AppLockManager {
             }
         }
 
-        // Reset inactivity timer on user interaction
+        // Reset inactivity timer when app becomes active
         activityObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didBecomeActiveNotification,
             object: nil,
@@ -263,6 +302,14 @@ final class AppLockManager {
             Task { @MainActor in
                 self.recordActivity()
             }
+        }
+
+        // Monitor keyboard, mouse, and scroll interactions to keep active sessions unlocked
+        eventMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.keyDown, .leftMouseDown, .rightMouseDown, .scrollWheel]
+        ) { [weak self] event in
+            self?.handleUserInteraction()
+            return event
         }
     }
 }

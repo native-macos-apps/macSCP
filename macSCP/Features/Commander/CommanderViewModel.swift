@@ -242,15 +242,17 @@ final class CommanderViewModel {
 
     func switchToLocal(in position: PanePosition, initialPath: String? = nil) {
         let targetPane = pane(for: position)
-        if case .remote = targetPane.contentType {
-            Task {
-                await targetPane.browserViewModel?.disconnect()
-            }
-        }
+        let previousRemoteVM = detachRemoteViewModel(from: targetPane)
 
         let localVM = dependencyContainer.makeLocalFileBrowserViewModel(initialPath: initialPath)
         targetPane.contentType = .local
         targetPane.browserViewModel = localVM
+
+        if let previousRemoteVM {
+            Task {
+                await previousRemoteVM.disconnect()
+            }
+        }
 
         Task {
             await localVM.connect()
@@ -259,14 +261,16 @@ final class CommanderViewModel {
 
     func switchToServers(in position: PanePosition) {
         let targetPane = pane(for: position)
-        if case .remote = targetPane.contentType {
-            Task {
-                await targetPane.browserViewModel?.disconnect()
-            }
-        }
+        let previousRemoteVM = detachRemoteViewModel(from: targetPane)
 
         targetPane.contentType = .servers
         targetPane.browserViewModel = nil
+
+        if let previousRemoteVM {
+            Task {
+                await previousRemoteVM.disconnect()
+            }
+        }
 
         Task {
             await connectionListViewModel.loadData()
@@ -275,11 +279,21 @@ final class CommanderViewModel {
 
     func disconnect(in position: PanePosition) {
         let targetPane = pane(for: position)
-        Task {
-            await targetPane.browserViewModel?.disconnect()
-            targetPane.contentType = .servers
-            targetPane.browserViewModel = nil
+        let previousVM = targetPane.browserViewModel
+
+        targetPane.contentType = .servers
+        targetPane.browserViewModel = nil
+
+        if let previousVM {
+            Task {
+                await previousVM.disconnect()
+            }
         }
+    }
+
+    private func detachRemoteViewModel(from pane: CommanderPaneState) -> FileBrowserViewModel? {
+        guard case .remote = pane.contentType else { return nil }
+        return pane.browserViewModel
     }
 
     // MARK: - Connection
@@ -345,6 +359,7 @@ final class CommanderViewModel {
 
     private func completeConnect(to connection: Connection, in position: PanePosition, password: String) async {
         let targetPane = pane(for: position)
+        let previousRemoteVM = detachRemoteViewModel(from: targetPane)
 
         let browserVM: FileBrowserViewModel
         if connection.connectionType == .s3 {
@@ -365,6 +380,12 @@ final class CommanderViewModel {
 
         targetPane.contentType = .remote(connection)
         targetPane.browserViewModel = browserVM
+
+        if let previousRemoteVM {
+            Task {
+                await previousRemoteVM.disconnect()
+            }
+        }
 
         await browserVM.connect()
     }

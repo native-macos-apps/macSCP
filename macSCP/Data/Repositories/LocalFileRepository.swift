@@ -52,8 +52,9 @@ final class LocalFileRepository: FileRepositoryProtocol, @unchecked Sendable {
         let home = LocalFileRepository.userHomeDirectory
         var expanded = path
 
-        // If path points to an old sandbox container directory, escape to actual user home
-        if expanded.contains("/Library/Containers/com.macscp.macSCP/Data") {
+        // If path points to an old sandbox container directory (excluding the app's own tmp directory), escape to actual user home
+        if expanded.contains("/Library/Containers/com.macscp.macSCP/Data"),
+           !expanded.contains("/Library/Containers/com.macscp.macSCP/Data/tmp") {
             let marker = "/Library/Containers/com.macscp.macSCP/Data"
             if let range = expanded.range(of: marker) {
                 let subpath = String(expanded[range.upperBound...])
@@ -204,7 +205,11 @@ final class LocalFileRepository: FileRepositoryProtocol, @unchecked Sendable {
 
     func readFileContent(at path: String) async throws -> String {
         let resolved = resolvePath(path)
-        return try String(contentsOfFile: resolved, encoding: .utf8)
+        let data = try Data(contentsOf: URL(fileURLWithPath: resolved))
+        guard let content = String(data: data, encoding: .utf8) else {
+            throw AppError.invalidFileEncoding
+        }
+        return content
     }
 
     func writeFileContent(_ content: String, to path: String) async throws {
@@ -310,7 +315,7 @@ final class LocalFileRepository: FileRepositoryProtocol, @unchecked Sendable {
 
 // MARK: - LocalFileStreamReader
 
-final class LocalFileStreamReader: FileStreamReader, @unchecked Sendable {
+actor LocalFileStreamReader: FileStreamReader {
     private let fileHandle: FileHandle
     private let chunkSize: Int
     private var isClosed = false

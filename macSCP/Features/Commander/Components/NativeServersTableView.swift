@@ -192,9 +192,16 @@ extension NativeServersTableView {
 
         func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any {
             if item == nil {
+                guard index >= 0, index < rootNodes.count else {
+                    logError("Server outline requested out-of-bounds root index \(index) (count: \(rootNodes.count))", category: .ui)
+                    return NSNull()
+                }
                 return rootNodes[index]
             }
-            guard let node = item as? ServerOutlineNode else { fatalError() }
+            guard let node = item as? ServerOutlineNode, index >= 0, index < node.children.count else {
+                logError("Server outline requested invalid child index \(index) for item \(String(describing: item))", category: .ui)
+                return NSNull()
+            }
             return node.children[index]
         }
 

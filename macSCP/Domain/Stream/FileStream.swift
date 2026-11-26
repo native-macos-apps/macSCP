@@ -18,7 +18,7 @@ protocol FileStreamReader: Sendable {
 }
 
 /// In-memory stream reader implementation, useful for tests and small buffers
-final class MemoryStreamReader: FileStreamReader, @unchecked Sendable {
+actor MemoryStreamReader: FileStreamReader {
     private let data: Data
     private let chunkSize: Int
     private var offset: Int = 0
@@ -29,7 +29,7 @@ final class MemoryStreamReader: FileStreamReader, @unchecked Sendable {
         self.chunkSize = chunkSize
     }
 
-    public func readNextChunk() async throws -> Data? {
+    func readNextChunk() async throws -> Data? {
         guard !isClosed, offset < data.count else { return nil }
         let nextOffset = min(offset + chunkSize, data.count)
         let chunk = data.subdata(in: offset..<nextOffset)
@@ -37,7 +37,7 @@ final class MemoryStreamReader: FileStreamReader, @unchecked Sendable {
         return chunk
     }
 
-    public func close() async {
+    func close() async {
         isClosed = true
     }
 }

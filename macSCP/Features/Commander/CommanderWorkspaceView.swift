@@ -11,6 +11,7 @@ struct CommanderWorkspaceView: View {
     @State private var viewModel: CommanderViewModel
     @State private var newFolderName = ""
     @State private var renameFolderName = ""
+    @State private var isShowingDatabaseFallbackAlert = false
     @Environment(\.openWindow) private var openWindow
 
     init(container: DependencyContainer) {
@@ -224,6 +225,18 @@ struct CommanderWorkspaceView: View {
             }
         }
         .errorAlert($viewModel.error)
+        .onAppear {
+            if DataStore.shared.isUsingInMemoryFallback {
+                isShowingDatabaseFallbackAlert = true
+            }
+        }
+        .alert("Temporary Storage Mode", isPresented: $isShowingDatabaseFallbackAlert) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(
+                "Could not open the local database (\(DataStore.shared.initializationError ?? "unknown error")). MacSCP is running in temporary in-memory mode — connections and folders created in this session will not be saved."
+            )
+        }
         .onChange(of: viewModel.pendingTerminalWindowId) { _, windowId in
             if let windowId = windowId {
                 openWindow(id: WindowID.terminal, value: windowId)

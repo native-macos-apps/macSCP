@@ -137,4 +137,55 @@ final class RemoteStreamTransferEngineTests: XCTestCase {
 
         await reader.close()
     }
+
+    func testLocalFileStreamReaderReadsChunksAndHandlesClose() async throws {
+        let tempDir = FileManager.default.temporaryDirectory
+        let fileURL = tempDir.appendingPathComponent("stream_test_\(UUID().uuidString).bin")
+        let payload = Data((0..<256).map { UInt8($0) })
+        try payload.write(to: fileURL)
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+
+        let handle = try FileHandle(forReadingFrom: fileURL)
+        let reader = LocalFileStreamReader(fileHandle: handle, chunkSize: 64)
+
+        let firstChunk = try await reader.readNextChunk()
+        XCTAssertEqual(firstChunk?.count, 64)
+
+        await reader.close()
+
+        let afterClose = try await reader.readNextChunk()
+        XCTAssertNil(afterClose, "Reading from a closed LocalFileStreamReader must return nil")
+    }
+
+    func testLocalFileRepositoryReadFileContentRejectsInvalidUTF8() async throws {
+        let testDir = FileManager.default.temporaryDirectory
+        let repo = LocalFileRepository()
+
+        let invalidURL = testDir.appendingPathComponent("invalid_utf8_\(UUID().uuidString).bin")
+        let emptyURL = testDir.appendingPathComponent("empty_\(UUID().uuidString).txt")
+        let validURL = testDir.appendingPathComponent("valid_\(UUID().uuidString).txt")
+
+        try Data([0xFF, 0xFE, 0x80, 0x81]).write(to: invalidURL)
+        try Data().write(to: emptyURL)
+        try Data("Hello UTF-8 🚀".utf8).write(to: validURL)
+
+        defer {
+            try? FileManager.default.removeItem(at: invalidURL)
+            try? FileManager.default.removeItem(at: emptyURL)
+            try? FileManager.default.removeItem(at: validURL)
+        }
+
+        do {
+            _ = try await repo.readFileContent(at: invalidURL.path)
+            XCTFail("Expected AppError.invalidFileEncoding for non-UTF-8 bytes")
+        } catch let error as AppError {
+            XCTAssertEqual(error, .invalidFileEncoding)
+        }
+
+        let emptyContent = try await repo.readFileContent(at: emptyURL.path)
+        XCTAssertEqual(emptyContent, "")
+
+        let validContent = try await repo.readFileContent(at: validURL.path)
+        XCTAssertEqual(validContent, "Hello UTF-8 🚀")
+    }
 }

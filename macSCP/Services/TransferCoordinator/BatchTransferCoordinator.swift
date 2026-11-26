@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import os
 
 struct BatchExecutionResult: Sendable {
     let completedFiles: Int
@@ -62,21 +63,16 @@ final class BatchTransferCoordinator: Sendable {
 
         // 2. Concurrency-bounded worker pool for file transfers
         let concurrency = max(1, min(16, maxConcurrent))
-        var failedItems: [TransferQueueItem] = []
-        let failedItemsLock = NSLock()
-
-        final class ProgressState: @unchecked Sendable {
-            var itemIndex = 0
-        }
-        let progressState = ProgressState()
+        let failedItemsLock = OSAllocatedUnfairLock<[TransferQueueItem]>(initialState: [])
+        var itemIndex = 0
 
         await withTaskGroup(of: Void.self) { group in
             let total = items.count
             let initialCount = min(concurrency, total)
 
-            while progressState.itemIndex < initialCount {
-                let item = items[progressState.itemIndex]
-                progressState.itemIndex += 1
+            while itemIndex < initialCount {
+                let item = items[itemIndex]
+                itemIndex += 1
                 group.addTask {
                     let succeeded = await self.transferSingleItemWithRetry(
                         item: item,
@@ -88,9 +84,7 @@ final class BatchTransferCoordinator: Sendable {
                         onError: onError
                     )
                     if !succeeded && !tracker.isBatchCancelled {
-                        failedItemsLock.lock()
-                        failedItems.append(item)
-                        failedItemsLock.unlock()
+                        failedItemsLock.withLock { $0.append(item) }
                     }
                 }
             }
@@ -100,9 +94,9 @@ final class BatchTransferCoordinator: Sendable {
                     // Halt scheduling new files; active workers will receive cancellation
                     break
                 }
-                if progressState.itemIndex < total {
-                    let nextItem = items[progressState.itemIndex]
-                    progressState.itemIndex += 1
+                if itemIndex < total {
+                    let nextItem = items[itemIndex]
+                    itemIndex += 1
                     group.addTask {
                         let succeeded = await self.transferSingleItemWithRetry(
                             item: nextItem,
@@ -114,9 +108,7 @@ final class BatchTransferCoordinator: Sendable {
                             onError: onError
                         )
                         if !succeeded && !tracker.isBatchCancelled {
-                            failedItemsLock.lock()
-                            failedItems.append(nextItem)
-                            failedItemsLock.unlock()
+                            failedItemsLock.withLock { $0.append(nextItem) }
                         }
                     }
                 }
@@ -126,7 +118,7 @@ final class BatchTransferCoordinator: Sendable {
         // 3. If batch or task was cancelled, mark all remaining queued items as cancelled
         let isCancelled = tracker.isBatchCancelled || Task.isCancelled
         if isCancelled {
-            let scheduledIndex = progressState.itemIndex
+            let scheduledIndex = itemIndex
             if scheduledIndex < items.count {
                 for item in items[scheduledIndex...] {
                     let transfer = TransferProgress(
@@ -149,6 +141,8 @@ final class BatchTransferCoordinator: Sendable {
         // 4. Drain remaining in-flight state without fabricating 100% completion
         let finalSnapshot = tracker.drainFinal(isCancelled: isCancelled)
         onUpdate(finalSnapshot)
+
+        let failedItems = failedItemsLock.withLock { $0 }
 
         return BatchExecutionResult(
             completedFiles: tracker.completedFiles,
@@ -204,14 +198,21 @@ final class BatchTransferCoordinator: Sendable {
             maxRetries: retryPolicy.maxRetries
         )
 
-        // Cancellation action reference for active transfer
-        final class CancellationBox: @unchecked Sendable {
-            var cancelAction: (() -> Void)?
+        // Thread-safe cancellation state shared between worker task and UI cancellation callback
+        struct CancellationState: Sendable {
+            var isCancelled = false
+            var cancelAction: (@Sendable () -> Void)?
         }
-        let cancelBox = CancellationBox()
+        let cancellationLock = OSAllocatedUnfairLock(initialState: CancellationState())
 
         if let snapshot = tracker.registerActive(transfer: transfer, onCancel: {
-            cancelBox.cancelAction?()
+            let action = cancellationLock.withLock { state -> (@Sendable () -> Void)? in
+                state.isCancelled = true
+                let action = state.cancelAction
+                state.cancelAction = nil
+                return action
+            }
+            action?()
         }) {
             onUpdate(snapshot)
         }
@@ -220,7 +221,8 @@ final class BatchTransferCoordinator: Sendable {
         while true {
             attempt += 1
 
-            if Task.isCancelled || tracker.isBatchCancelled {
+            let isItemCancelled = cancellationLock.withLock { $0.isCancelled }
+            if Task.isCancelled || tracker.isBatchCancelled || isItemCancelled {
                 if let snapshot = tracker.failOrCancelFile(id: item.id, totalBytes: item.fileSize, error: nil, isCancelled: true) {
                     onUpdate(snapshot)
                 }
@@ -235,7 +237,16 @@ final class BatchTransferCoordinator: Sendable {
                     }
                 }
             }
-            cancelBox.cancelAction = {
+            let cancelledBeforeStart = cancellationLock.withLock { state -> Bool in
+                if state.isCancelled {
+                    return true
+                }
+                state.cancelAction = {
+                    transferTask.cancel()
+                }
+                return false
+            }
+            if cancelledBeforeStart {
                 transferTask.cancel()
             }
 

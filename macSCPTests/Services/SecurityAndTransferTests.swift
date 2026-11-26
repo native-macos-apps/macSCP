@@ -85,4 +85,53 @@ final class SecurityAndTransferTests: XCTestCase {
         windowManager.removeFileBrowserData(for: id)
         XCTAssertNil(windowManager.getFileBrowserData(for: id))
     }
+
+    // MARK: - AppLockManager Inactivity Activity Tracking Tests
+
+    private final class StubBiometricAuthService: BiometricAuthServiceProtocol, @unchecked Sendable {
+        var authResult: Result<Void, BiometricError> = .success(())
+
+        func isBiometricAvailable() -> Bool { true }
+        func authenticate(reason: String) async -> Result<Void, BiometricError> {
+            authResult
+        }
+    }
+
+    func testAppLockManager_HandleUserInteractionResetsTimerWithThrottle() {
+        let suiteName = "com.macSCP.tests.applock.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let manager = AppLockManager(
+            biometricService: StubBiometricAuthService(),
+            userDefaults: defaults,
+            activityThrottleInterval: 5.0,
+            installObservers: false
+        )
+        manager.enableBiometricLock()
+        manager.lockAfterInactivity = true
+
+        let baselineResets = manager.inactivityResetCount
+        let t0 = Date(timeIntervalSince1970: 1_000)
+
+        manager.handleUserInteraction(now: t0)
+        XCTAssertEqual(manager.inactivityResetCount, baselineResets + 1)
+        XCTAssertEqual(manager.lastActivityDate, t0)
+
+        // Within throttle window (2s < 5s) -> should not reschedule timer
+        manager.handleUserInteraction(now: t0.addingTimeInterval(2.0))
+        XCTAssertEqual(manager.inactivityResetCount, baselineResets + 1)
+
+        // Past throttle window (6s >= 5s) -> should reschedule timer
+        let t2 = t0.addingTimeInterval(6.0)
+        manager.handleUserInteraction(now: t2)
+        XCTAssertEqual(manager.inactivityResetCount, baselineResets + 2)
+        XCTAssertEqual(manager.lastActivityDate, t2)
+    }
+
+    func testDataStore_InMemoryInitializationSucceedsCleanly() {
+        let store = DataStore(inMemoryOnly: true)
+        XCTAssertFalse(store.isUsingInMemoryFallback)
+        XCTAssertNil(store.initializationError)
+    }
 }

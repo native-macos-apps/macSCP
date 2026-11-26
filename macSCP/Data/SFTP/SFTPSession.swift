@@ -370,7 +370,10 @@ actor SFTPSession: SFTPSessionProtocol {
             offset += UInt64(data.count)
         }
 
-        return String(data: allData, encoding: .utf8) ?? ""
+        guard let content = String(data: allData, encoding: .utf8) else {
+            throw AppError.invalidFileEncoding
+        }
+        return content
     }
 
     func writeFileContent(_ content: String, to path: String) async throws {
@@ -528,7 +531,7 @@ actor SFTPSession: SFTPSessionProtocol {
 
 // MARK: - SFTPStreamReader
 
-final class SFTPStreamReader: FileStreamReader, @unchecked Sendable {
+actor SFTPStreamReader: FileStreamReader {
     private let client: SFTPClient
     private let handle: ByteBuffer
     private var offset: UInt64 = 0

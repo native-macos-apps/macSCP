@@ -96,4 +96,76 @@ final class CommanderViewModelTests: XCTestCase {
         sut.transferSelectedToOppositePane()
         XCTAssertFalse(sut.hasActiveTransfers)
     }
+
+    // MARK: - Session Cleanup & Race Condition Tests
+
+    func testSwitchToLocalDisconnectsPreviousRemoteSessionWithoutDisconnectingNewLocalVM() async throws {
+        let mockSession = MockSFTPSession()
+        let connection = Connection(name: "Test SFTP", host: "example.com", username: "root")
+        let remoteVM = container.makeFileBrowserViewModel(
+            connection: connection,
+            sftpSession: mockSession,
+            password: "secret"
+        )
+        sut.rightPane.contentType = .remote(connection)
+        sut.rightPane.browserViewModel = remoteVM
+
+        sut.switchToLocal(in: .right)
+
+        XCTAssertEqual(sut.rightPane.contentType, .local)
+        XCTAssertNotNil(sut.rightPane.browserViewModel)
+        XCTAssertTrue(sut.rightPane.browserViewModel?.isLocal ?? false)
+        XCTAssertFalse(sut.rightPane.browserViewModel === remoteVM)
+
+        // Allow detached disconnect Task to run
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        let disconnected = await mockSession.disconnectCalled
+        XCTAssertTrue(disconnected, "Previous remote session must be disconnected when switching to local")
+    }
+
+    func testSwitchToServersDisconnectsPreviousRemoteSession() async throws {
+        let mockSession = MockSFTPSession()
+        let connection = Connection(name: "Test SFTP", host: "example.com", username: "root")
+        let remoteVM = container.makeFileBrowserViewModel(
+            connection: connection,
+            sftpSession: mockSession,
+            password: "secret"
+        )
+        sut.leftPane.contentType = .remote(connection)
+        sut.leftPane.browserViewModel = remoteVM
+
+        sut.switchToServers(in: .left)
+
+        XCTAssertEqual(sut.leftPane.contentType, .servers)
+        XCTAssertNil(sut.leftPane.browserViewModel)
+
+        // Allow detached disconnect Task to run
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        let disconnected = await mockSession.disconnectCalled
+        XCTAssertTrue(disconnected, "Previous remote session must be disconnected when switching to servers")
+    }
+
+    func testDisconnectClearsPaneImmediatelyAndDisconnectsSession() async throws {
+        let mockSession = MockSFTPSession()
+        let connection = Connection(name: "Test SFTP", host: "example.com", username: "root")
+        let remoteVM = container.makeFileBrowserViewModel(
+            connection: connection,
+            sftpSession: mockSession,
+            password: "secret"
+        )
+        sut.rightPane.contentType = .remote(connection)
+        sut.rightPane.browserViewModel = remoteVM
+
+        sut.disconnect(in: .right)
+
+        XCTAssertEqual(sut.rightPane.contentType, .servers)
+        XCTAssertNil(sut.rightPane.browserViewModel)
+
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        let disconnected = await mockSession.disconnectCalled
+        XCTAssertTrue(disconnected, "disconnect(in:) must disconnect the detached remote session")
+    }
 }
