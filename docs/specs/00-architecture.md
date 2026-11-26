@@ -49,13 +49,14 @@ flowchart TD
 
 ## 3. Multi-Window Scene Architecture
 
-Ứng dụng định nghĩa 5 SwiftUI Scenes trong `MacSCPApp.swift` (tất cả đều gắn `.appLockOverlay()`):
+Ứng dụng định nghĩa 6 SwiftUI Scenes trong `MacSCPApp.swift` (tất cả đều gắn `.appLockOverlay()`):
 
 | Scene | Window ID | Mục đích |
 | :--- | :--- | :--- |
 | Main `WindowGroup` | Default | `CommanderWorkspaceView` — không gian làm việc Dual-Pane chính. |
 | File Browser `WindowGroup` | `WindowID.fileBrowser` | `FileBrowserWindow` — cửa sổ duyệt file độc lập cho từng session. |
 | File Editor `WindowGroup` | `WindowID.fileEditor` | `FileEditorWindow` — cửa sổ soạn thảo text/code trực tiếp trên remote. |
+| Integrated Terminal `WindowGroup` | `WindowID.terminal` | `TerminalWindow` — cửa sổ SSH Terminal tích hợp (`SwiftTerm` + `swift-nio-ssh`). |
 | File Info `WindowGroup` | `WindowID.fileInfo` | `FileInfoWindow` — hộp thoại thông tin chi tiết file/folder (content-sized). |
 | `Settings` | `Cmd+,` | `SettingsView` — cài đặt ứng dụng (Transfers, SSH Keys, Known Hosts, Security). |
 
@@ -76,7 +77,8 @@ Quản lý trạng thái giữa các cửa sổ được điều phối qua `Win
 
 ## 5. Thư viện & Dependencies chính (SPM)
 
-- **`swift-nio-ssh` & `SwiftNIO`**: Triển khai SSHv2 và SFTP engine bất đồng bộ hiệu năng cao (pipelined).
+- **`swift-nio-ssh` & `SwiftNIO`**: Triển khai SSHv2 (SFTP pipelined + Interactive PTY Shell) bất đồng bộ hiệu năng cao.
+- **`SwiftTerm`**: Terminal emulator (VT100/Xterm) tích hợp trực tiếp trong ứng dụng cho phiên SSH tương tác.
 - **`aws-sdk-swift`**: Kết nối Amazon S3 và các dịch vụ S3-compatible (MinIO, DigitalOcean Spaces, Cloudflare R2, v.v.).
 - **`Sparkle`**: Cơ chế kiểm tra và cập nhật phiên bản tự động (`SPUStandardUpdaterController`, `appcast.xml`).
 

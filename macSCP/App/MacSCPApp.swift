@@ -64,6 +64,15 @@ struct MacSCPApp: App {
         .modelContainer(container.modelContainer)
         .defaultSize(WindowSize.fileEditor)
 
+        // Integrated SSH Terminal Window
+        WindowGroup(id: WindowID.terminal, for: String.self) { $windowId in
+            if let windowId = windowId {
+                TerminalWindow(windowId: windowId)
+                    .appLockOverlay()
+            }
+        }
+        .defaultSize(WindowSize.terminal)
+
         // File Info Window
         WindowGroup(id: WindowID.fileInfo, for: String.self) { $windowId in
             if let windowId = windowId {

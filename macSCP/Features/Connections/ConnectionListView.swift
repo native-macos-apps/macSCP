@@ -160,6 +160,13 @@ struct ConnectionListView: View {
                 viewModel.clearPendingWindow()
             }
         }
+        .onChange(of: viewModel.pendingTerminalWindowId) { _, windowId in
+            if let windowId = windowId {
+                logInfo("Opening integrated terminal window with ID: \(windowId)", category: .ui)
+                openWindow(id: WindowID.terminal, value: windowId)
+                viewModel.clearPendingTerminalWindow()
+            }
+        }
     }
 }
 

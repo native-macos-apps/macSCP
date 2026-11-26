@@ -17,14 +17,8 @@ Tuy nhiên, quá trình phát triển tích lũy một số khoản nợ kỹ th
 
 ## 1. Mức độ Nghiêm trọng Cao (P0 — Bảo mật, Bug & Data Races)
 
-### 1.1. Bảo mật & Rò rỉ Private Key trong `TerminalLauncher`
-* **Vị trí:** `macSCP/Core/Utilities/TerminalLauncher.swift` (L43–L61)
-* **Vấn đề:**
-  * **File private key tạm không bao giờ bị xóa:** Ghi plaintext SSH private key ra `NSTemporaryDirectory()/macscp_ssh_<uuid>.pem` và để tồn tại vĩnh viễn trên đĩa. Ngoài ra, file được tạo bằng `write(to:atomically:)` trước rồi mới `setAttributes([.posixPermissions: 0o600])`, tạo cửa sổ race condition ngắn với quyền mặc định (umask).
-  * **Nguy cơ Shell / AppleScript Command Injection:** `username` và `host` được nội suy thẳng vào lệnh `ssh` không escape; `initialPath` chỉ escape dấu `"` mà không chặn `$(...)`, backtick `` ` ``, `;` hay `\`.
-* **Hướng xử lý:**
-  * Tạo file key với quyền `0600` ngay từ đầu (`FileManager.createFile(..., attributes: [.posixPermissions: 0o600])`) và lên lịch xóa an toàn (hoặc truyền qua cơ chế tạm có dọn dẹp sau khi SSH handshake xong).
-  * Escape mọi tham số shell bằng single-quote escaping chuẩn POSIX (tương tự `escapeForShell` trong `SFTPSession.swift`) trước khi escape sang AppleScript.
+### 1.1. ~~Bảo mật & Rò rỉ Private Key trong `TerminalLauncher`~~ (Đã xử lý — 2026-11-26)
+* **Giải pháp đã triển khai:** Xóa bỏ hoàn toàn `TerminalLauncher.swift`, quyền Apple Events (`com.apple.security.temporary-exception.apple-events`) và `NSAppleEventsUsageDescription`. Thay thế bằng cửa sổ **Integrated SSH Terminal** (`macSCP/Features/Terminal/`, `SSHTerminalSession`, `SSHConnection.connectShell`) dùng `SwiftTerm` + `swift-nio-ssh`: private key được parse trực tiếp trong RAM (zero-disk), host key được xác thực qua `KnownHostsManager`, và `initialPath` được escape chuẩn POSIX single-quote (xem `SPEC-08` và `docs/plans/2026112601-integrated-swiftterm-terminal.md`).
 
 ### 1.2. Race Condition & Rò rỉ Session ở `CommanderViewModel`
 * **Vị trí:** `macSCP/Features/Commander/CommanderViewModel.swift` (L238–L269, L329–L353)
@@ -148,7 +142,7 @@ Tuy nhiên, quá trình phát triển tích lũy một số khoản nợ kỹ th
 ## 5. Lộ trình Xử lý Đề xuất
 
 ### P0 — Sửa ngay (Bảo mật, Bug runtime & Data Races)
-- [ ] Fix shell/AppleScript escaping và tạo/dọn dẹp an toàn file private key tạm trong `TerminalLauncher.swift`.
+- [x] ~~Fix shell/AppleScript escaping và tạo/dọn dẹp an toàn file private key tạm trong `TerminalLauncher.swift`.~~ (Thay thế hoàn toàn bằng Integrated SSH Terminal với `SwiftTerm` + `swift-nio-ssh`)
 - [ ] Fix race condition & rò rỉ session trong `CommanderViewModel` (`switchToLocal`, `switchToServers`, `completeConnect`).
 - [ ] Đồng bộ hóa an toàn (`actor` hoặc lock) cho `CancellationBox`, `SFTPStreamReader`, `S3StreamReader`, `LocalFileStreamReader`.
 - [ ] Throw lỗi encoding thay vì trả về `""` trong `SFTPSession.readFileContent`.

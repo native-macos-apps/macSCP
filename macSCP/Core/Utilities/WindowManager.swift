@@ -112,6 +112,40 @@ struct FileInfoWindowData: Sendable {
     let connectionName: String
 }
 
+struct TerminalWindowData: Sendable {
+    let connectionId: UUID
+    let connectionName: String
+    let host: String
+    let port: Int
+    let username: String
+    let password: String
+    let authMethod: AuthMethod
+    let sshKeyId: UUID?
+    let initialPath: String?
+
+    init(
+        connectionId: UUID,
+        connectionName: String,
+        host: String,
+        port: Int,
+        username: String,
+        password: String,
+        authMethod: AuthMethod,
+        sshKeyId: UUID? = nil,
+        initialPath: String? = nil
+    ) {
+        self.connectionId = connectionId
+        self.connectionName = connectionName
+        self.host = host
+        self.port = port
+        self.username = username
+        self.password = password
+        self.authMethod = authMethod
+        self.sshKeyId = sshKeyId
+        self.initialPath = initialPath
+    }
+}
+
 // MARK: - Window Manager
 @MainActor
 final class WindowManager: ObservableObject {
@@ -120,6 +154,7 @@ final class WindowManager: ObservableObject {
     private var fileBrowserData: [String: FileBrowserWindowData] = [:]
     private var fileEditorData: [String: FileEditorWindowData] = [:]
     private var fileInfoData: [String: FileInfoWindowData] = [:]
+    private var terminalData: [String: TerminalWindowData] = [:]
 
     private init() {}
 
@@ -169,10 +204,26 @@ final class WindowManager: ObservableObject {
     }
 
 
+    // MARK: - Terminal Window
+    func storeTerminalData(_ data: TerminalWindowData) -> String {
+        let id = UUID().uuidString
+        terminalData[id] = data
+        return id
+    }
+
+    func getTerminalData(for id: String) -> TerminalWindowData? {
+        terminalData[id]
+    }
+
+    func removeTerminalData(for id: String) {
+        terminalData.removeValue(forKey: id)
+    }
+
     // MARK: - Cleanup
     func clearAllData() {
         fileBrowserData.removeAll()
         fileEditorData.removeAll()
         fileInfoData.removeAll()
+        terminalData.removeAll()
     }
 }

@@ -42,6 +42,8 @@ final class ConnectionListViewModel {
 
     // Window opening state
     var pendingWindowId: String?
+    var pendingTerminalWindowId: String?
+    private var isPasswordPromptForTerminal = false
 
     // MARK: - Dependencies
     private let connectionRepository: ConnectionRepositoryProtocol
@@ -314,6 +316,7 @@ final class ConnectionListViewModel {
                 } else {
                     logInfo("No saved S3 credentials, showing prompt", category: .ui)
                     isShowingPasswordPrompt = true
+                    isPasswordPromptForTerminal = false
                 }
             } else {
                 // For SFTP, check for saved password
@@ -326,6 +329,7 @@ final class ConnectionListViewModel {
                     openFileBrowser(for: connection, password: "")
                 } else {
                     logInfo("No saved password, showing prompt", category: .ui)
+                    isPasswordPromptForTerminal = false
                     isShowingPasswordPrompt = true
                 }
             }
@@ -334,13 +338,23 @@ final class ConnectionListViewModel {
 
     func connectWithPassword(_ password: String) {
         guard let connection = connectionToConnect else { return }
-        openFileBrowser(for: connection, password: password)
+        let forTerminal = isPasswordPromptForTerminal
         isShowingPasswordPrompt = false
+        isPasswordPromptForTerminal = false
         connectionToConnect = nil
+
+        if forTerminal {
+            Task { @MainActor in
+                await self.openTerminal(for: connection, password: password)
+            }
+        } else {
+            openFileBrowser(for: connection, password: password)
+        }
     }
 
     func cancelConnect() {
         isShowingPasswordPrompt = false
+        isPasswordPromptForTerminal = false
         connectionToConnect = nil
     }
 
@@ -381,16 +395,24 @@ final class ConnectionListViewModel {
             return
         }
 
-        let result = await TerminalLauncher.launchTerminal(
+        let data = TerminalWindowData(
+            connectionId: connection.id,
+            connectionName: connection.name,
             host: connection.host,
             port: connection.port,
             username: connection.username,
+            password: password,
+            authMethod: connection.authMethod,
             sshKeyId: connection.sshKeyId
         )
-        
-        if case .failure(let error) = result {
-            self.error = AppError.terminalError(error.localizedDescription)
-        }
+
+        let windowId = windowManager.storeTerminalData(data)
+        logInfo("Stored terminal window data with ID: \(windowId)", category: .ui)
+        pendingTerminalWindowId = windowId
+    }
+
+    func clearPendingTerminalWindow() {
+        pendingTerminalWindowId = nil
     }
 
     func requestTerminal(for connection: Connection) {
@@ -418,6 +440,7 @@ final class ConnectionListViewModel {
                 await openTerminal(for: connection, password: "")
             } else {
                 // Need to prompt for password
+                isPasswordPromptForTerminal = true
                 isShowingPasswordPrompt = true
             }
         }
@@ -426,6 +449,7 @@ final class ConnectionListViewModel {
     func openTerminalWithPassword(_ password: String) {
         guard let connection = connectionToConnect else { return }
         isShowingPasswordPrompt = false
+        isPasswordPromptForTerminal = false
         connectionToConnect = nil
         Task { @MainActor in
             await self.openTerminal(for: connection, password: password)

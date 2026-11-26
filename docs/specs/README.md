@@ -41,7 +41,7 @@ flowchart LR
 | `SPEC-05` | [05-file-browser.md](05-file-browser.md) | File Browser, Navigation, CRUD, Clipboard, Quick Look, Local Sandbox Bookmarks, File Info | Active |
 | `SPEC-06` | [06-transfer-engine.md](06-transfer-engine.md) | Batch Transfer Coordinator, bounded concurrency, retry policy, zero-disk remote streaming | Active |
 | `SPEC-07` | [07-file-editor.md](07-file-editor.md) | Built-in Text/Code File Editor, Find & Replace, Save/Reload/Revert | Active |
-| `SPEC-08` | [08-terminal-integration.md](08-terminal-integration.md) | Tích hợp Native macOS Terminal qua AppleScript | Active |
+| `SPEC-08` | [08-terminal-integration.md](08-terminal-integration.md) | Integrated SSH Terminal (`SwiftTerm` + `swift-nio-ssh`) | Active |
 | `SPEC-09` | [09-security-and-settings.md](09-security-and-settings.md) | App Lock (Touch ID / Passcode), Settings (4 tabs), Sparkle Auto-Updates | Active |
 
 ---

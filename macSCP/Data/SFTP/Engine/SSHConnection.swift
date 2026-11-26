@@ -50,6 +50,61 @@ actor SSHConnection {
         port: Int,
         userAuthDelegate: NIOSSHClientUserAuthenticationDelegate
     ) async throws -> SFTPClient {
+        let (channel, sshHandler, errorRecorder) = try await connectTransport(
+            host: host,
+            port: port,
+            userAuthDelegate: userAuthDelegate
+        )
+
+        do {
+            return try await establishSFTP(channel: channel, sshHandler: sshHandler)
+        } catch {
+            // Surface the real handshake error (e.g. host key mismatch) instead of
+            // the generic "channel closed" that follows it.
+            if let recorded = errorRecorder.recordedError {
+                throw recorded
+            }
+            throw error
+        }
+    }
+
+    func connectShell(
+        host: String,
+        port: Int,
+        userAuthDelegate: NIOSSHClientUserAuthenticationDelegate,
+        cols: Int,
+        rows: Int,
+        onData: @escaping @Sendable ([UInt8]) -> Void,
+        onClose: @escaping @Sendable (Int?, Error?) -> Void
+    ) async throws -> SSHShellChannel {
+        let (channel, sshHandler, errorRecorder) = try await connectTransport(
+            host: host,
+            port: port,
+            userAuthDelegate: userAuthDelegate
+        )
+
+        do {
+            return try await establishShell(
+                channel: channel,
+                sshHandler: sshHandler,
+                cols: cols,
+                rows: rows,
+                onData: onData,
+                onClose: onClose
+            )
+        } catch {
+            if let recorded = errorRecorder.recordedError {
+                throw recorded
+            }
+            throw error
+        }
+    }
+
+    private func connectTransport(
+        host: String,
+        port: Int,
+        userAuthDelegate: NIOSSHClientUserAuthenticationDelegate
+    ) async throws -> (Channel, NIOSSHHandler, ParentChannelErrorRecorder) {
         let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
         self.group = group
 
@@ -76,16 +131,74 @@ actor SSHConnection {
         try await channel.pipeline.addHandler(errorRecorder).get()
         self.channel = channel
 
-        do {
-            return try await establishSFTP(channel: channel, sshHandler: sshHandler)
-        } catch {
-            // Surface the real handshake error (e.g. host key mismatch) instead of
-            // the generic "channel closed" that follows it.
-            if let recorded = errorRecorder.recordedError {
-                throw recorded
-            }
-            throw error
+        return (channel, sshHandler, errorRecorder)
+    }
+
+    private func establishShell(
+        channel: Channel,
+        sshHandler: NIOSSHHandler,
+        cols: Int,
+        rows: Int,
+        onData: @escaping @Sendable ([UInt8]) -> Void,
+        onClose: @escaping @Sendable (Int?, Error?) -> Void
+    ) async throws -> SSHShellChannel {
+        let promise = channel.eventLoop.makePromise(of: Channel.self)
+        let shellHandler = SSHShellChannelHandler(onData: onData, onClose: onClose)
+
+        sshHandler.createChannel(promise, channelType: .session) { childChannel, _ in
+            childChannel.pipeline.addHandler(shellHandler)
         }
+
+        let childChannel = try await promise.futureResult.get()
+
+        // 1. Request PTY allocation (xterm-256color)
+        let ptyRequest = SSHChannelRequestEvent.PseudoTerminalRequest(
+            wantReply: true,
+            term: "xterm-256color",
+            terminalCharacterWidth: max(1, cols),
+            terminalRowHeight: max(1, rows),
+            terminalPixelWidth: 0,
+            terminalPixelHeight: 0,
+            terminalModes: SSHTerminalModes([:])
+        )
+        try await sendChannelRequest(
+            ptyRequest,
+            name: "PTY request",
+            on: childChannel,
+            handler: shellHandler
+        )
+
+        // 2. Request interactive login shell
+        let shellRequest = SSHChannelRequestEvent.ShellRequest(wantReply: true)
+        try await sendChannelRequest(
+            shellRequest,
+            name: "Shell request",
+            on: childChannel,
+            handler: shellHandler
+        )
+
+        return SSHShellChannel(channel: childChannel)
+    }
+
+    private func sendChannelRequest(
+        _ event: Any,
+        name: String,
+        on childChannel: Channel,
+        handler: SSHShellChannelHandler
+    ) async throws {
+        let replyPromise = childChannel.eventLoop.makePromise(of: Void.self)
+        nonisolated(unsafe) let outboundEvent = event
+        childChannel.eventLoop.execute {
+            handler.expectRequestReply(replyPromise, name: name)
+            let timeoutTask = childChannel.eventLoop.scheduleTask(in: .seconds(15)) {
+                replyPromise.fail(AppError.connectionTimeout)
+            }
+            replyPromise.futureResult.whenComplete { _ in
+                timeoutTask.cancel()
+            }
+            childChannel.triggerUserOutboundEvent(outboundEvent, promise: nil)
+        }
+        try await replyPromise.futureResult.get()
     }
 
     private func establishSFTP(channel: Channel, sshHandler: NIOSSHHandler) async throws -> SFTPClient {

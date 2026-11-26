@@ -99,6 +99,11 @@ final class CommanderViewModel {
     private var currentBatchTracker: BatchProgressTracker?
     var pendingConnection: Connection?
     var pendingPanePosition: PanePosition?
+    private var pendingTerminalInitialPath: String?
+    private var isPasswordPromptForTerminal: Bool = false
+
+    // Window opening state
+    var pendingTerminalWindowId: String?
 
     var error: AppError?
 
@@ -310,13 +315,23 @@ final class CommanderViewModel {
     }
 
     func connectWithPassword(_ password: String) {
-        guard let conn = pendingConnection, let pos = pendingPanePosition else { return }
+        guard let conn = pendingConnection else { return }
+        let forTerminal = isPasswordPromptForTerminal
+        let initialPath = pendingTerminalInitialPath
+        let pos = pendingPanePosition
+
         isShowingPasswordPrompt = false
         pendingConnection = nil
         pendingPanePosition = nil
+        pendingTerminalInitialPath = nil
+        isPasswordPromptForTerminal = false
 
-        Task {
-            await completeConnect(to: conn, in: pos, password: password)
+        if forTerminal {
+            presentTerminalWindow(for: conn, password: password, initialPath: initialPath)
+        } else if let pos = pos {
+            Task {
+                await completeConnect(to: conn, in: pos, password: password)
+            }
         }
     }
 
@@ -324,6 +339,8 @@ final class CommanderViewModel {
         isShowingPasswordPrompt = false
         pendingConnection = nil
         pendingPanePosition = nil
+        pendingTerminalInitialPath = nil
+        isPasswordPromptForTerminal = false
     }
 
     private func completeConnect(to connection: Connection, in position: PanePosition, password: String) async {
@@ -604,7 +621,7 @@ final class CommanderViewModel {
         transfer(from: activePanePosition, to: targetPos)
     }
 
-    // MARK: - Terminal Launcher
+    // MARK: - Integrated SSH Terminal
 
     func openTerminalForActivePane() {
         let active = activePane
@@ -623,21 +640,46 @@ final class CommanderViewModel {
             return
         }
 
-        Task {
+        Task { @MainActor in
             let allowed = await AppLockManager.shared.authenticateForConnection()
             guard allowed else {
                 logInfo("Terminal cancelled: biometric auth denied", category: .auth)
                 return
             }
 
-            _ = await TerminalLauncher.launchTerminal(
-                host: connection.host,
-                port: connection.port,
-                username: connection.username,
-                sshKeyId: connection.sshKeyId,
-                initialPath: initialPath
-            )
+            if let savedPassword = dependencyContainer.keychainService.getPassword(for: connection.id) {
+                presentTerminalWindow(for: connection, password: savedPassword, initialPath: initialPath)
+            } else if connection.authMethod == .privateKey {
+                presentTerminalWindow(for: connection, password: "", initialPath: initialPath)
+            } else {
+                pendingConnection = connection
+                pendingPanePosition = nil
+                pendingTerminalInitialPath = initialPath
+                isPasswordPromptForTerminal = true
+                isShowingPasswordPrompt = true
+            }
         }
+    }
+
+    func clearPendingTerminalWindow() {
+        pendingTerminalWindowId = nil
+    }
+
+    private func presentTerminalWindow(for connection: Connection, password: String, initialPath: String?) {
+        let data = TerminalWindowData(
+            connectionId: connection.id,
+            connectionName: connection.name,
+            host: connection.host,
+            port: connection.port,
+            username: connection.username,
+            password: password,
+            authMethod: connection.authMethod,
+            sshKeyId: connection.sshKeyId,
+            initialPath: initialPath
+        )
+        let windowId = dependencyContainer.windowManager.storeTerminalData(data)
+        logInfo("Stored terminal window data with ID: \(windowId)", category: .ui)
+        pendingTerminalWindowId = windowId
     }
 
     // MARK: - Refresh

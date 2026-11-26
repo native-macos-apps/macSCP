@@ -1,75 +1,99 @@
 ---
 id: SPEC-08
-title: Native macOS Terminal Integration
+title: Integrated SSH Terminal (SwiftTerm)
 status: active
 last_updated: 2026-11-26
 related_files:
-  - MacSCP/Core/Utilities/TerminalLauncher.swift
-  - MacSCP/Features/Commander/CommanderViewModel.swift
-  - MacSCP/Features/Connections/ConnectionListViewModel.swift
-related_debt:
-  - docs/technical-debt.md#11-bảo-mật--rò-rỉ-private-key-trong-terminallauncher
-  - docs/technical-debt.md#33-thiếu-nhất-quán--xử-lý-lỗi-mong-manh
+  - macSCP/Data/SFTP/Engine/SSHConnection.swift
+  - macSCP/Data/SFTP/Engine/SSHShellChannelHandler.swift
+  - macSCP/Data/SFTP/SSHTerminalSession.swift
+  - macSCP/Domain/RepositoryProtocols/SSHTerminalSessionProtocol.swift
+  - macSCP/Features/Terminal/TerminalWindow.swift
+  - macSCP/Features/Terminal/TerminalViewModel.swift
+  - macSCP/Features/Terminal/TerminalScreenView.swift
+  - macSCP/Features/Terminal/Components/SwiftTermRepresentable.swift
+  - macSCP/Features/Terminal/Components/TerminalStatusBar.swift
+  - macSCP/Features/Commander/CommanderViewModel.swift
+  - macSCP/Features/Connections/ConnectionListViewModel.swift
+related_debt: []
 ---
 
-# SPEC-08: Native macOS Terminal Integration
+# SPEC-08: Integrated SSH Terminal (SwiftTerm)
 
 ## 1. Tổng quan & Mục tiêu
-Cho phép người dùng mở phiên SSH trực tiếp trong ứng dụng **Terminal** mặc định của macOS (`com.apple.Terminal`) chỉ bằng một cú nhấp chuột từ danh sách kết nối hoặc từ thư mục đang duyệt trong File Browser/Commander, tự động truyền `host`, `port`, `username`, SSH key (nếu có) và thư mục làm việc hiện tại (`initialPath`).
+Cho phép người dùng mở phiên SSH tương tác trực tiếp ngay bên trong **MacSCP** trong một cửa sổ riêng biệt (`TerminalWindow`, kiến trúc tương đồng `FileEditorWindow`), sử dụng **SwiftTerm** làm terminal emulator và **`swift-nio-ssh`** làm tầng vận chuyển SSHv2.
+
+Thiết kế này loại bỏ hoàn toàn phụ thuộc `Terminal.app` / `NSAppleScript`, không bao giờ ghi SSH private key ra ổ đĩa, và kế thừa trực tiếp xác thực `KnownHostsManager`, Keychain và App Lock.
 
 ---
 
 ## 2. User Flows & Hành vi chính
 
-### Flow 1: Khởi chạy Terminal SSH (`TerminalLauncher.launchTerminal`)
-1. Người dùng nhấn nút mở Terminal trên một kết nối SFTP (có thể kèm `initialPath` là thư mục đang mở).
-2. `TerminalLauncher` dựng câu lệnh `ssh`:
-   - `ssh -p <port>`
-   - Nếu có `sshKeyId`: lấy nội dung key từ `SSHKeyStorageService`, ghi ra file tạm quyền `0600` và thêm `-i <tempKeyPath>`.
-   - Thêm `<username>@<host>`.
-   - Nếu có `initialPath` (khác `/`, `~`, rỗng): thêm `-t "cd \"<initialPath>\" ; exec $SHELL -l"`.
-3. Kiểm tra `Terminal.app` đã chạy chưa (`ensureTerminalIsRunning`, timeout `5s`); nếu chưa, khởi chạy qua `NSWorkspace.shared.openApplication`.
-4. Kích hoạt cửa sổ Terminal và chạy lệnh thông qua `NSAppleScript` (`do script "..."`).
-5. Nếu lần chạy đầu gặp lỗi `"application isn't running"`, chờ `250ms` và retry 1 lần.
+### Flow 1: Mở cửa sổ Terminal từ Commander hoặc Connection List
+1. Người dùng chọn mở Terminal trên một kết nối SFTP (có thể kèm `initialPath` là thư mục đang mở trong File Browser).
+2. Xác thực sinh trắc học qua `AppLockManager.shared.authenticateForConnection()` nếu được bật.
+3. Lấy thông tin xác thực:
+   - Nếu có mật khẩu đã lưu trong Keychain → dùng trực tiếp.
+   - Nếu `authMethod == .privateKey` → mở cửa sổ ngay (key sẽ được đọc từ `SSHKeyStorageService` trong RAM khi kết nối).
+   - Nếu `authMethod == .password` và chưa lưu mật khẩu → hiển thị `PasswordPromptSheet`.
+4. Lưu `TerminalWindowData` vào `WindowManager` và mở Scene `WindowID.terminal` (hỗ trợ mở nhiều cửa sổ độc lập).
+
+### Flow 2: Phiên SSH tương tác (`SSHTerminalSession` + `SwiftTerm`)
+1. `TerminalWindow` khởi tạo `TerminalViewModel` và gọi `connect()`.
+2. `SSHTerminalSession` thiết lập kết nối TCP + `NIOSSHHandler` (`KnownHostsServerAuthDelegate`), yêu cầu cấp phát PTY (`xterm-256color`, `cols × rows`) và khởi chạy login shell (`ShellRequest`).
+3. Nếu có `initialPath` hợp lệ, gửi lệnh `cd '<posix-escaped-path>' && clear\n` vào PTY.
+4. Dữ liệu stdout/stderr từ remote được đẩy vào `SwiftTerm.TerminalView.feed(byteArray:)`; phím bấm/paste của người dùng đi qua `TerminalViewDelegate.send` tới `SSHShellChannel.write`.
+5. Khi thay đổi kích thước cửa sổ, `sizeChanged` gửi `SSHChannelRequestEvent.WindowChangeRequest` để cập nhật kích thước PTY trên server.
+6. Hỗ trợ phím tắt `⌘K` (Clear), `⌘+`/`⌘-`/`⌘0` (Zoom font `9...28pt`), và nút **Reconnect** khi ngắt kết nối hoặc lỗi.
+
+### Flow 3: Đóng cửa sổ & Dọn dẹp Session
+- Khi đóng `TerminalWindow`, `.onDisappear` xóa `TerminalWindowData` khỏi `WindowManager` và gọi `viewModel.disconnect()` để đóng SSH child channel cùng `MultiThreadedEventLoopGroup`.
 
 ---
 
 ## 3. Data Models & Contracts
-- **`TerminalLauncherError`**:
-  - `.appleScriptInitializationFailed`
-  - `.executionFailed(String)`
-  - `.automationNotAuthorized` — thông báo hướng dẫn mở *System Settings > Privacy & Security > Automation*.
+- **`TerminalWindowData`** (`WindowManager.swift`): `connectionId`, `connectionName`, `host`, `port`, `username`, `password`, `authMethod`, `sshKeyId`, `initialPath`.
+- **`SSHTerminalSessionProtocol`** (`macSCP/Domain/RepositoryProtocols/SSHTerminalSessionProtocol.swift`): giao diện bất đồng bộ cho `connect` (password & private key), `send`, `resize`, `disconnect`.
+- **`TerminalConnectionState`**: `.connecting`, `.connected`, `.disconnected(exitCode: Int?)`, `.failed(AppError)`.
 
 ---
 
 ## 4. Kiến trúc & Entry Points
-- **Utility:** `TerminalLauncher` (`MacSCP/Core/Utilities/TerminalLauncher.swift`).
-- **Callers:** `CommanderViewModel.openTerminal`, `ConnectionListViewModel`, `FileBrowserViewModel`.
+- **Window & Root View:** `TerminalWindow` (Scene `WindowID.terminal`), `TerminalScreenView`.
+- **Components:** `SwiftTermRepresentable`, `TerminalStatusBar`.
+- **ViewModel:** `TerminalViewModel`.
+- **SSH Engine:** `SSHConnection.connectShell`, `SSHShellChannelHandler`, `SSHShellChannel`, `SSHTerminalSession`.
+- **Callers:** `CommanderViewModel.openTerminal`, `ConnectionListViewModel.requestTerminal` / `openTerminal`.
 
 ---
 
 ## 5. Edge Cases & Xử lý lỗi
 | Tình huống | Hành vi mong đợi |
 | :--- | :--- |
-| Chưa cấp quyền Automation cho Terminal | Trả về `.automationNotAuthorized` và hiển thị thông báo hướng dẫn người dùng cấp quyền. |
-| Terminal chưa khởi động sẵn | Mở Terminal qua `NSWorkspace`, chờ tối đa 5 giây cho tới khi tiến trình sẵn sàng. |
-| Kết nối là S3 hoặc Local | Không áp dụng SSH Terminal launch. |
+| Kết nối là S3 hoặc Local | Không áp dụng SSH Terminal. |
+| SSH Private Key bị xóa khỏi Keychain | Hiển thị banner lỗi rõ ràng trong cửa sổ Terminal, không crash. |
+| Host key thay đổi (nghi ngờ MITM) | `KnownHostsServerAuthDelegate` từ chối kết nối và hiển thị chi tiết fingerprint mismatch. |
+| `initialPath` chứa ký tự đặc biệt hoặc `\n`/`\r`/`\0` | Ký tự điều khiển bị từ chối (`nil`); đường dẫn hợp lệ được escape single-quote chuẩn POSIX. |
+| Mất mạng / server đóng phiên | Chuyển trạng thái sang `.disconnected` hoặc `.failed`, giữ nguyên màn hình output cuối và hiển thị nút **Reconnect**. |
 
 ---
 
 ## 6. Security, Concurrency & Invariants
-- **Strict Shell & AppleScript Escaping (Target Invariant):** Mọi tham số đầu vào (`host`, `username`, `initialPath`, `keyPath`) phải được escape an toàn theo chuẩn POSIX single-quote trước khi escape sang AppleScript để triệt tiêu Command Injection.
-- **Ephemeral Private Key Hygiene (Target Invariant):** File private key tạm phải được tạo với quyền `0600` nguyên tử ngay lúc tạo và được dọn dẹp an toàn sau khi SSH handshake hoàn tất.
+- **Zero-Disk Private Key:** SSH private key không bao giờ được ghi ra file tạm trên ổ đĩa; toàn bộ quá trình parse và ký diễn ra trong RAM.
+- **No AppleScript / No External Process Injection:** Không sử dụng `NSAppleScript` hay quyền `com.apple.security.temporary-exception.apple-events`.
+- **POSIX Single-Quote Escaping:** Mọi `initialPath` trước khi gửi vào PTY đều qua `SSHTerminalSession.makeInitialDirectoryCommand(for:)`.
+- **App Lock Compliance:** Scene `WindowID.terminal` được bọc bởi `.appLockOverlay()`.
 
 ---
 
 ## 7. Acceptance Criteria
-- [ ] Mở Terminal thành công cho kết nối SFTP dùng cả Password và In-App SSH Key.
-- [ ] Khi mở từ File Browser, shell tự động `cd` vào đúng `initialPath`.
-- [ ] Lỗi quyền Automation được hiển thị rõ ràng tới người dùng ở mọi entry point (kể cả Commander).
+- [x] Mở Terminal tích hợp thành công cho kết nối SFTP dùng cả Password và In-App SSH Key (không tạo file `.pem` tạm).
+- [x] Khi mở từ File Browser, shell tự động `cd` an toàn vào `initialPath`.
+- [x] Thay đổi kích thước cửa sổ gửi `WindowChangeRequest` đồng bộ kích thước PTY.
+- [x] Mở nhiều cửa sổ Terminal song song hoạt động độc lập và giải phóng tài nguyên khi đóng.
+- [x] Unit tests bao phủ escaping chống injection và vòng đời `TerminalViewModel`.
 
 ---
 
 ## 8. Known Gaps & Technical Debt
-- **P0 — Rò rỉ file private key tạm & Command Injection:** File `macscp_ssh_<uuid>.pem` hiện không bao giờ bị xóa, có race condition quyền tạo file, và `username`/`host`/`initialPath` chưa được escape POSIX đầy đủ (`docs/technical-debt.md#1.1`).
-- **P1 — Nuốt lỗi ở Commander:** `CommanderViewModel.openTerminal` (L633) đang bỏ qua `Result` trả về của `TerminalLauncher.launchTerminal` (`docs/technical-debt.md#3.3`).
+- Hiện chưa có khoản nợ kỹ thuật mở nào (đã xử lý xong `docs/technical-debt.md#1.1` và lỗi nuốt kết quả trong `#3.3`).

@@ -59,6 +59,11 @@ final class DependencyContainer: ObservableObject {
         SFTPSession()
     }
 
+    // MARK: - SSH Terminal Session Factory
+    func makeSSHTerminalSession() -> SSHTerminalSessionProtocol {
+        SSHTerminalSession()
+    }
+
     // MARK: - S3 Session Factory
     func makeS3Session() -> S3SessionProtocol {
         S3Session()

@@ -11,6 +11,7 @@ struct CommanderWorkspaceView: View {
     @State private var viewModel: CommanderViewModel
     @State private var newFolderName = ""
     @State private var renameFolderName = ""
+    @Environment(\.openWindow) private var openWindow
 
     init(container: DependencyContainer) {
         self._viewModel = State(initialValue: CommanderViewModel(container: container))
@@ -223,5 +224,11 @@ struct CommanderWorkspaceView: View {
             }
         }
         .errorAlert($viewModel.error)
+        .onChange(of: viewModel.pendingTerminalWindowId) { _, windowId in
+            if let windowId = windowId {
+                openWindow(id: WindowID.terminal, value: windowId)
+                viewModel.clearPendingTerminalWindow()
+            }
+        }
     }
 }
