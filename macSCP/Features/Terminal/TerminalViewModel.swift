@@ -67,22 +67,23 @@ final class TerminalViewModel {
 
     // MARK: - View Callbacks (SwiftTerm bridge)
     /// Called on MainActor when remote SSH bytes arrive.
-    var onOutput: (([UInt8]) -> Void)? {
+    /// Marked `@ObservationIgnored` so binding callbacks from `SwiftTermRepresentable` never triggers SwiftUI update loops.
+    @ObservationIgnored var onOutput: (([UInt8]) -> Void)? {
         didSet {
             flushPendingOutputIfNeeded()
         }
     }
 
     /// Called on MainActor when the user requests clearing the terminal screen/scrollback.
-    var onClearScreen: (() -> Void)?
+    @ObservationIgnored var onClearScreen: (() -> Void)?
 
     // MARK: - Private State
-    private let sessionFactory: () -> SSHTerminalSessionProtocol
-    private let keyContentProvider: (UUID) throws -> String?
-    private var session: SSHTerminalSessionProtocol?
-    private var pendingOutputBuffer: [[UInt8]] = []
-    private var connectGeneration: Int = 0
-    private var isDisconnecting = false
+    @ObservationIgnored private let sessionFactory: () -> SSHTerminalSessionProtocol
+    @ObservationIgnored private let keyContentProvider: (UUID) throws -> String?
+    @ObservationIgnored private var session: SSHTerminalSessionProtocol?
+    @ObservationIgnored private var pendingOutputBuffer: [[UInt8]] = []
+    @ObservationIgnored private var connectGeneration: Int = 0
+    @ObservationIgnored private var isDisconnecting = false
 
     // MARK: - Computed Properties
     var windowTitle: String {

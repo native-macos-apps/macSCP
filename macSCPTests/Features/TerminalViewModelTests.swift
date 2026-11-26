@@ -5,6 +5,7 @@
 //  Unit tests for integrated SSH TerminalViewModel and SSHTerminalSession escaping helpers.
 //
 
+import Observation
 import XCTest
 @testable import macSCP
 
@@ -292,5 +293,34 @@ final class TerminalViewModelTests: XCTestCase {
         let count = await mockSession.disconnectCount
         XCTAssertEqual(count, 1)
         XCTAssertEqual(vm.connectionState, .disconnected(exitCode: nil))
+    }
+
+    func testBindingCallbacksDoesNotTriggerObservationInvalidation() {
+        let data = TerminalWindowData(
+            connectionId: UUID(),
+            connectionName: "Observation Test",
+            host: "example.com",
+            port: 22,
+            username: "user",
+            password: "",
+            authMethod: .password
+        )
+        let vm = TerminalViewModel(data: data, sessionFactory: { MockSSHTerminalSession() })
+
+        var invalidated = false
+        withObservationTracking {
+            // Simulate SwiftTermRepresentable reading fontSize and binding callbacks during updateNSView
+            _ = vm.fontSize
+            vm.onOutput = { _ in }
+            vm.onClearScreen = {}
+        } onChange: {
+            invalidated = true
+        }
+
+        // Re-binding callbacks must NOT trigger @Observable invalidation (prevents infinite SwiftUI updateNSView loop)
+        vm.onOutput = { _ in }
+        vm.onClearScreen = {}
+
+        XCTAssertFalse(invalidated, "Binding onOutput/onClearScreen must be @ObservationIgnored and never invalidate SwiftUI views")
     }
 }

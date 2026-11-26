@@ -10,14 +10,14 @@ import AppKit
 import SwiftTerm
 
 struct SwiftTermRepresentable: NSViewRepresentable {
-    @Bindable var viewModel: TerminalViewModel
+    let viewModel: TerminalViewModel
 
     func makeCoordinator() -> Coordinator {
         Coordinator(viewModel: viewModel)
     }
 
     func makeNSView(context: Context) -> TerminalView {
-        let terminalView = TerminalView(frame: .zero)
+        let terminalView = TerminalView(frame: NSRect(x: 0, y: 0, width: 640, height: 400))
         terminalView.terminalDelegate = context.coordinator
         terminalView.font = NSFont.monospacedSystemFont(ofSize: viewModel.fontSize, weight: .regular)
         terminalView.nativeForegroundColor = NSColor(calibratedWhite: 0.92, alpha: 1.0)
@@ -37,8 +37,10 @@ struct SwiftTermRepresentable: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: TerminalView, context: Context) {
-        context.coordinator.viewModel = viewModel
-        context.coordinator.bindCallbacks()
+        if context.coordinator.viewModel !== viewModel {
+            context.coordinator.viewModel = viewModel
+            context.coordinator.bindCallbacks()
+        }
 
         let currentSize = nsView.font.pointSize
         if abs(currentSize - viewModel.fontSize) > 0.1 {
