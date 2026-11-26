@@ -45,6 +45,12 @@ This project is indexed by GitNexus as **macSCP** (3073 symbols, 16084 relations
 
 # Agent Rules & Guidelines
 
+## Feature Specifications (Spec-Driven AI Workflow)
+- **Single Source of Truth**: All feature specifications live in `docs/specs/` (indexed in `docs/specs/README.md`).
+- **Read Before Editing**: Before planning or implementing changes to a feature, ALWAYS read its corresponding spec in `docs/specs/` to review its user flows, data contracts, invariants, and known technical debt.
+- **New Features**: For any new feature, draft a spec from `docs/specs/_template.md` (`status: draft`) before writing an implementation plan in `docs/plans/`.
+- **Keep Specs Synchronized**: Whenever feature behavior, data models, constraints, or acceptance criteria change, update the corresponding `docs/specs/XX-*.md` file (and `docs/specs/README.md` if adding/retiring a spec) in the same change.
+
 ## Plan Documentation
 - **Plan Storage**: All plan files MUST be saved in the `docs/plans/` directory.
 - **Naming Convention**: Plan files MUST adhere to the format `YYYYMMDDSeq-<artifact-name>.md`:
