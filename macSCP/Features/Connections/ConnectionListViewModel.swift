@@ -133,23 +133,13 @@ final class ConnectionListViewModel {
 
     // MARK: - Connection Actions
 
+    private var connectionPersistence: ConnectionPersistence {
+        ConnectionPersistence(repository: connectionRepository, keychain: keychainService)
+    }
+
     func saveConnection(_ connection: Connection, password: String?) async {
         do {
-            try await connectionRepository.save(connection)
-
-            if connection.savePassword, let password = password, !password.isEmpty {
-                if connection.connectionType == .s3 {
-                    // For S3, store credentials (username is access key, password is secret)
-                    let credentials = S3Credentials(
-                        accessKeyId: connection.username,
-                        secretAccessKey: password
-                    )
-                    try keychainService.saveS3Credentials(credentials, for: connection.id)
-                } else {
-                    try keychainService.savePassword(password, for: connection.id)
-                }
-            }
-
+            try await connectionPersistence.save(connection, password: password)
             await loadData()
             isShowingNewConnectionSheet = false
             AnalyticsService.trackConnectionCreated(protocol: .init(from: connection.connectionType))
@@ -162,26 +152,7 @@ final class ConnectionListViewModel {
 
     func updateConnection(_ connection: Connection, password: String?) async {
         do {
-            try await connectionRepository.update(connection)
-
-            if connection.savePassword, let password = password, !password.isEmpty {
-                if connection.connectionType == .s3 {
-                    let credentials = S3Credentials(
-                        accessKeyId: connection.username,
-                        secretAccessKey: password
-                    )
-                    try keychainService.updateS3Credentials(credentials, for: connection.id)
-                } else {
-                    try keychainService.updatePassword(password, for: connection.id)
-                }
-            } else if !connection.savePassword {
-                if connection.connectionType == .s3 {
-                    try? keychainService.deleteS3Credentials(for: connection.id)
-                } else {
-                    try? keychainService.deletePassword(for: connection.id)
-                }
-            }
-
+            try await connectionPersistence.update(connection, password: password)
             await loadData()
             isShowingEditConnectionSheet = false
             connectionToEdit = nil
@@ -197,13 +168,7 @@ final class ConnectionListViewModel {
 
     func deleteConnection(_ connection: Connection) async {
         do {
-            try await connectionRepository.delete(id: connection.id)
-            // Delete credentials based on connection type
-            if connection.connectionType == .s3 {
-                try? keychainService.deleteS3Credentials(for: connection.id)
-            } else {
-                try? keychainService.deletePassword(for: connection.id)
-            }
+            try await connectionPersistence.delete(id: connection.id)
             if selectedConnectionId == connection.id {
                 selectedConnectionId = nil
             }

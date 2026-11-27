@@ -242,36 +242,64 @@ actor S3Session: S3SessionProtocol {
         let client = try requireClient()
         let target = try pathResolver.resolveObjectTarget(for: path)
         let prefix = target.key.hasSuffix("/") ? target.key : target.key + "/"
+        try await Self.deleteDirectoryObjects(
+            bucket: target.bucket,
+            prefix: prefix,
+            list: { try await client.listObjectsV2(input: $0) },
+            delete: { try await client.deleteObjects(input: $0) }
+        )
+        logInfo("Deleted directory: \(path)", category: .s3)
+    }
 
-        var isTruncated = true
+    nonisolated static func deleteDirectoryObjects(
+        bucket: String,
+        prefix: String,
+        list: @Sendable (ListObjectsV2Input) async throws -> ListObjectsV2Output,
+        delete: @Sendable (DeleteObjectsInput) async throws -> DeleteObjectsOutput
+    ) async throws {
         var continuationToken: String? = nil
+        var failureCount = 0
+        var failureDetails: [String] = []
 
-        while isTruncated {
-            let response = try await client.listObjectsV2(input: ListObjectsV2Input(
-                bucket: target.bucket,
+        repeat {
+            try Task.checkCancellation()
+            let response = try await list(ListObjectsV2Input(
+                bucket: bucket,
                 continuationToken: continuationToken,
                 prefix: prefix
             ))
 
-            if let contents = response.contents, !contents.isEmpty {
-                let objectsToDelete = contents.compactMap { object -> S3ClientTypes.ObjectIdentifier? in
-                    guard let key = object.key else { return nil }
-                    return S3ClientTypes.ObjectIdentifier(key: key)
+            // The prefix marker itself is included in this listing when it exists.
+            let objects = try (response.contents ?? []).map { object in
+                guard let key = object.key else {
+                    throw AppError.s3OperationFailed("An object under '\(prefix)' was listed without a key.")
                 }
-                if !objectsToDelete.isEmpty {
-                    _ = try await client.deleteObjects(input: DeleteObjectsInput(
-                        bucket: target.bucket,
-                        delete: S3ClientTypes.Delete(objects: objectsToDelete)
-                    ))
+                return S3ClientTypes.ObjectIdentifier(key: key)
+            }
+            if !objects.isEmpty {
+                try Task.checkCancellation()
+                let result = try await delete(DeleteObjectsInput(
+                    bucket: bucket,
+                    delete: S3ClientTypes.Delete(objects: objects)
+                ))
+                let errors = result.errors ?? []
+                failureCount += errors.count
+                for error in errors.prefix(max(0, 5 - failureDetails.count)) {
+                    failureDetails.append("\(error.key ?? "<unknown key>"): \(error.message ?? error.code ?? "Delete failed")")
                 }
             }
 
-            isTruncated = response.isTruncated ?? false
-            continuationToken = response.nextContinuationToken
-        }
+            guard response.isTruncated == true else { break }
+            guard let next = response.nextContinuationToken, next != continuationToken else {
+                throw AppError.s3OperationFailed("Incomplete listing while deleting '\(prefix)'.")
+            }
+            continuationToken = next
+        } while true
 
-        _ = try? await client.deleteObject(input: DeleteObjectInput(bucket: target.bucket, key: prefix))
-        logInfo("Deleted directory: \(path)", category: .s3)
+        if failureCount > 0 {
+            let details = failureDetails.joined(separator: "\n")
+            throw AppError.s3OperationFailed("Could not delete \(failureCount) object(s) under '\(prefix)'.\n\(details)")
+        }
     }
 
     func rename(from sourcePath: String, to destinationPath: String) async throws {
@@ -281,7 +309,7 @@ actor S3Session: S3SessionProtocol {
             throw AppError.s3OperationFailed("Moving across buckets is not supported")
         }
 
-        if sourceTarget.key.hasSuffix("/") {
+        if sourcePath.hasSuffix("/") {
             try await copyDirectory(from: sourcePath, to: destinationPath)
             try await deleteDirectory(at: sourcePath)
         } else {
@@ -304,12 +332,15 @@ actor S3Session: S3SessionProtocol {
     }
 
     func copyFile(from sourcePath: String, to destinationPath: String) async throws {
-        let client = try requireClient()
         let sourceTarget = try pathResolver.resolveObjectTarget(for: sourcePath)
         let destinationTarget = try pathResolver.resolveObjectTarget(for: destinationPath)
         guard sourceTarget.bucket == destinationTarget.bucket else {
             throw AppError.s3OperationFailed("Copying across buckets is not supported")
         }
+        guard !sourceTarget.key.utf8.elementsEqual(destinationTarget.key.utf8) else {
+            throw AppError.s3OperationFailed("The source and destination are the same object.")
+        }
+        let client = try requireClient()
 
         do {
             _ = try await client.copyObject(input: CopyObjectInput(
@@ -324,7 +355,6 @@ actor S3Session: S3SessionProtocol {
     }
 
     func copyDirectory(from sourcePath: String, to destinationPath: String) async throws {
-        let client = try requireClient()
         let sourceTarget = try pathResolver.resolveObjectTarget(for: sourcePath)
         let destinationTarget = try pathResolver.resolveObjectTarget(for: destinationPath)
         guard sourceTarget.bucket == destinationTarget.bucket else {
@@ -333,7 +363,12 @@ actor S3Session: S3SessionProtocol {
 
         let sourcePrefix = sourceTarget.key.hasSuffix("/") ? sourceTarget.key : sourceTarget.key + "/"
         let destPrefix = destinationTarget.key.hasSuffix("/") ? destinationTarget.key : destinationTarget.key + "/"
+        guard !destPrefix.utf8.starts(with: sourcePrefix.utf8),
+              !sourcePrefix.utf8.starts(with: destPrefix.utf8) else {
+            throw AppError.s3OperationFailed("The source and destination folders overlap.")
+        }
 
+        let client = try requireClient()
         var isTruncated = true
         var continuationToken: String? = nil
 
@@ -371,7 +406,7 @@ actor S3Session: S3SessionProtocol {
             throw AppError.s3OperationFailed("Moving across buckets is not supported")
         }
 
-        if sourceTarget.key.hasSuffix("/") {
+        if sourcePath.hasSuffix("/") {
             try await copyDirectory(from: sourcePath, to: destinationPath)
             try await deleteDirectory(at: sourcePath)
         } else {

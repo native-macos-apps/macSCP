@@ -83,6 +83,8 @@ Cung cấp trình duyệt tập tin chuẩn Finder cho cả **Local**, **SFTP**,
 | Chuyển file nhanh khi Quick Look đang tải | Hủy `quickLookTask` trước đó, không ghi đè nội dung của file cũ lên file mới. |
 | Bookmark local bị stale sau khi nâng cấp macOS | Tự động tạo lại bookmark mới từ URL đã resolve hoặc hiển thị lại `LocalPermissionRequestView`. |
 | Mở file không phải text/code (`!fileType.isEditable`) | Không mở bằng text editor; cho phép download hoặc Quick Look nếu hỗ trợ. |
+| Upload cây thư mục qua alias của filesystem | Giữ tên thư mục người dùng chọn và đường dẫn lồng nhau. Nếu không xác định được đường dẫn tương đối thì báo lỗi trước khi upload. |
+| Copy qua repository local hoặc ghi stream vào đích local thất bại | Giữ nội dung cũ của đích, nếu có. |
 
 ---
 
@@ -100,8 +102,7 @@ Cung cấp trình duyệt tập tin chuẩn Finder cho cả **Local**, **SFTP**,
 ---
 
 ## 8. Known Gaps & Technical Debt
-- **P0/P1 — Ghi file local có thể làm mất bản đích hiện có khi thất bại, và batch upload có thể bỏ mục khi scanner đầy buffer.** Xem [SPEC-06](06-transfer-engine.md#8-known-gaps--technical-debt).
-- **P1 — Batch upload có thể làm phẳng cây thư mục local.** Lỗi xảy ra khi đường dẫn gốc và đường dẫn do Foundation liệt kê đi qua hai alias khác nhau. Xem [SPEC-06](06-transfer-engine.md#8-known-gaps--technical-debt).
+- ~~**P0/P1 — Ghi vào đích local và tính đầy đủ của cây upload**~~ (Đã xử lý — 2026-11-27: staging trước khi thay đích, bản kê quét đầy đủ và đường dẫn tương đối chuẩn hóa). Xem [SPEC-06](06-transfer-engine.md).
 - ~~**P1 — God Object & Leaky Abstraction:** `FileBrowserViewModel.swift` dài 1,355 dòng và phân nhánh trực tiếp theo `sftpSession`/`s3Session`/`isLocal`~~ (Đã xử lý — 2026-11-26: tách `BrowserSessionProtocol`, `BrowserQuickLookController`, và `FileTransferManager`).
 - ~~**P1 — Rò rỉ bộ nhớ & file tạm trong Quick Look**~~ (Đã xử lý — 2026-11-26: `BrowserQuickLookController` dùng `NSCache`, xóa cache khi `disconnect()`, không cache lỗi, và `defer` xóa file tạm).
 - ~~**P0 — `LocalFileStreamReader` data race**~~ (Đã xử lý — 2026-11-26: chuyển sang `actor`).

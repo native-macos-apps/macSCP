@@ -5,6 +5,7 @@
 //  Repository implementation for local macOS file operations
 //
 
+import Darwin
 import Foundation
 
 final class LocalFileRepository: FileRepositoryProtocol, @unchecked Sendable {
@@ -174,16 +175,8 @@ final class LocalFileRepository: FileRepositoryProtocol, @unchecked Sendable {
     }
 
     func download(remotePath: String, to localURL: URL, progress: TransferProgressHandler?) async throws {
-        let src = resolvePath(remotePath)
-        let dst = localURL.path
-        if fileManager.fileExists(atPath: dst) {
-            try? fileManager.removeItem(atPath: dst)
-        }
-        try fileManager.copyItem(atPath: src, toPath: dst)
-        if let attrs = try? fileManager.attributesOfItem(atPath: dst),
-           let size = attrs[.size] as? Int64 {
-            progress?(size)
-        }
+        let source = URL(fileURLWithPath: resolvePath(remotePath))
+        try copyReplacingDestination(from: source, to: localURL, progress: progress)
     }
 
     func upload(localURL: URL, to remotePath: String) async throws {
@@ -191,16 +184,55 @@ final class LocalFileRepository: FileRepositoryProtocol, @unchecked Sendable {
     }
 
     func upload(localURL: URL, to remotePath: String, progress: TransferProgressHandler?) async throws {
-        let src = localURL.path
-        let dst = resolvePath(remotePath)
-        if fileManager.fileExists(atPath: dst) {
-            try? fileManager.removeItem(atPath: dst)
-        }
-        try fileManager.copyItem(atPath: src, toPath: dst)
-        if let attrs = try? fileManager.attributesOfItem(atPath: dst),
+        let destination = URL(fileURLWithPath: resolvePath(remotePath))
+        try copyReplacingDestination(from: localURL, to: destination, progress: progress)
+    }
+
+    private func copyReplacingDestination(
+        from source: URL,
+        to destination: URL,
+        progress: TransferProgressHandler?
+    ) throws {
+        try Task.checkCancellation()
+        let stagingDirectory = try createStagingDirectory(for: destination)
+        defer { removeStagingDirectory(stagingDirectory) }
+        let staged = stagingDirectory.appendingPathComponent("replacement")
+        try fileManager.copyItem(at: source, to: staged)
+        try installStagedItem(staged, at: destination)
+        if let attrs = try? fileManager.attributesOfItem(atPath: destination.path),
            let size = attrs[.size] as? Int64 {
             progress?(size)
         }
+    }
+
+    private func createStagingDirectory(for destination: URL) throws -> URL {
+        try fileManager.url(
+            for: .itemReplacementDirectory,
+            in: .userDomainMask,
+            appropriateFor: destination.deletingLastPathComponent(),
+            create: true
+        )
+    }
+
+    private func removeStagingDirectory(_ directory: URL) {
+        do {
+            try fileManager.removeItem(at: directory)
+        } catch {
+            logWarning("Could not clean up local transfer staging directory: \(error)", category: .app)
+        }
+    }
+
+    private func installStagedItem(_ staged: URL, at destination: URL) throws {
+        try Task.checkCancellation()
+        guard Darwin.rename(staged.path, destination.path) != 0 else { return }
+        let renameError = errno
+
+        // Replacing a directory (or replacing it with a file) requires exchanging the two entries.
+        if [ENOTEMPTY, EEXIST, EISDIR, ENOTDIR].contains(renameError) {
+            guard renamex_np(staged.path, destination.path, UInt32(RENAME_SWAP)) != 0 else { return }
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno), userInfo: [NSFilePathErrorKey: destination.path])
+        }
+        throw NSError(domain: NSPOSIXErrorDomain, code: Int(renameError), userInfo: [NSFilePathErrorKey: destination.path])
     }
 
     func readFileContent(at path: String) async throws -> String {
@@ -288,28 +320,34 @@ final class LocalFileRepository: FileRepositoryProtocol, @unchecked Sendable {
     }
 
     func writeStream(from reader: FileStreamReader, to path: String, totalSize: Int64?, progress: TransferProgressHandler?) async throws {
-        let resolved = resolvePath(path)
-        let url = URL(fileURLWithPath: resolved)
+        try Task.checkCancellation()
+        let url = URL(fileURLWithPath: resolvePath(path))
         let parentDir = url.deletingLastPathComponent()
         try fileManager.createDirectory(at: parentDir, withIntermediateDirectories: true)
 
-        if fileManager.fileExists(atPath: resolved) {
-            try? fileManager.removeItem(at: url)
+        let stagingDirectory = try createStagingDirectory(for: url)
+        defer { removeStagingDirectory(stagingDirectory) }
+        let staged = stagingDirectory.appendingPathComponent("replacement")
+        guard fileManager.createFile(atPath: staged.path, contents: nil) else {
+            throw AppError.fileWriteFailed
         }
-        fileManager.createFile(atPath: resolved, contents: nil)
 
-        let handle = try FileHandle(forWritingTo: url)
-        defer { try? handle.close() }
-
-        var totalWritten: Int64 = 0
-        progress?(0)
-
-        while let chunk = try await reader.readNextChunk(), !chunk.isEmpty {
-            try Task.checkCancellation()
-            try handle.write(contentsOf: chunk)
-            totalWritten += Int64(chunk.count)
-            progress?(totalWritten)
+        let handle = try FileHandle(forWritingTo: staged)
+        do {
+            var totalWritten: Int64 = 0
+            progress?(0)
+            while let chunk = try await reader.readNextChunk(), !chunk.isEmpty {
+                try Task.checkCancellation()
+                try handle.write(contentsOf: chunk)
+                totalWritten += Int64(chunk.count)
+                progress?(totalWritten)
+            }
+        } catch {
+            try? handle.close()
+            throw error
         }
+        try handle.close()
+        try installStagedItem(staged, at: url)
     }
 }
 

@@ -19,6 +19,8 @@ struct CommanderTransfersPopover: View {
     }
 
     var body: some View {
+        let transfers = allTransfersList
+
         VStack(spacing: 0) {
             header
             Divider()
@@ -32,41 +34,22 @@ struct CommanderTransfersPopover: View {
                     },
                     onRetryFailed: {
                         Task { await viewModel.retryFailedTransfers() }
-                    },
-                    onClear: {
-                        viewModel.clearCompletedTransfers()
                     }
                 )
                 Divider()
             }
 
-            if allTransfersList.isEmpty && viewModel.currentActiveBatch == nil {
+            if transfers.isEmpty && viewModel.currentActiveBatch == nil {
                 emptyState
-            } else {
-                ScrollView {
-                    LazyVStack(spacing: 0) {
-                        ForEach(allTransfersList) { transfer in
-                            TransferItemView(
-                                transfer: transfer,
-                                onCancel: {
-                                    cancelTransfer(transfer)
-                                },
-                                onRemove: {
-                                    removeTransfer(transfer)
-                                }
-                            )
-
-                            if transfer.id != allTransfersList.last?.id {
-                                Divider()
-                                    .padding(.leading, 54)
-                            }
-                        }
-                    }
-                }
-                .frame(maxHeight: 380)
+            } else if !transfers.isEmpty {
+                TransferItemsList(
+                    transfers: transfers,
+                    onCancel: cancelTransfer,
+                    onRemove: removeTransfer
+                )
             }
         }
-        .frame(width: 340)
+        .frame(width: TransferItemsList.popoverWidth)
     }
 
     private var header: some View {

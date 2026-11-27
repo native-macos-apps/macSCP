@@ -135,4 +135,87 @@ final class LocalFileRepositoryTests: XCTestCase {
             XCTFail("Unexpected error: \(error)")
         }
     }
+
+    func testFailedStreamPreservesExistingFileAndLeavesNoNewFile() async throws {
+        let existing = tempDir.appendingPathComponent("existing.txt")
+        let fresh = tempDir.appendingPathComponent("fresh.txt")
+        let original = Data("original".utf8)
+        try original.write(to: existing)
+
+        for destination in [existing, fresh] {
+            do {
+                try await repo.writeStream(from: FailingReader(), to: destination.path, totalSize: nil, progress: nil)
+                XCTFail("Expected a stream error")
+            } catch let error as AppError {
+                XCTAssertEqual(error, .connectionLost)
+            }
+        }
+
+        XCTAssertEqual(try Data(contentsOf: existing), original)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fresh.path))
+    }
+
+    func testCancelledStreamPreservesDestination() async throws {
+        let destination = tempDir.appendingPathComponent("destination.txt")
+        let original = Data("original".utf8)
+        try original.write(to: destination)
+        let (started, continuation) = AsyncStream<Int64>.makeStream()
+        let reader = FailingReader(waitBeforeError: true)
+        let repository = repo!
+        let write = Task {
+            defer { continuation.finish() }
+            try await repository.writeStream(from: reader, to: destination.path, totalSize: nil) { bytes in
+                continuation.yield(bytes)
+            }
+        }
+
+        for await progress in started where progress > 0 { break }
+        write.cancel()
+        do {
+            try await write.value
+            XCTFail("Expected cancellation")
+        } catch is CancellationError {
+            XCTAssertEqual(try Data(contentsOf: destination), original)
+        }
+    }
+
+    func testLocalCopyPreservesDestinationOnFailureAndReplacesDirectoryOnSuccess() async throws {
+        let destination = tempDir.appendingPathComponent("destination")
+        let source = tempDir.appendingPathComponent("source")
+        try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: false)
+        try Data("original".utf8).write(to: destination.appendingPathComponent("old"))
+
+        do {
+            try await repo.download(remotePath: source.path, to: destination)
+            XCTFail("Expected a missing source")
+        } catch {
+            XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: destination.path), ["old"])
+        }
+
+        try FileManager.default.createDirectory(at: source, withIntermediateDirectories: false)
+        try Data("new".utf8).write(to: source.appendingPathComponent("new"))
+        try await repo.download(remotePath: source.path, to: destination)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: destination.path), ["new"])
+    }
+
+    @MainActor
+    private final class FailingReader: FileStreamReader {
+        private var yielded = false
+        private let waitBeforeError: Bool
+
+        init(waitBeforeError: Bool = false) {
+            self.waitBeforeError = waitBeforeError
+        }
+
+        func readNextChunk() async throws -> Data? {
+            if !yielded {
+                yielded = true
+                return Data("partial".utf8)
+            }
+            if waitBeforeError { try await Task.sleep(for: .seconds(5)) }
+            throw AppError.connectionLost
+        }
+
+        func close() async {}
+    }
 }

@@ -99,6 +99,78 @@ final class ConnectionListViewModelTests: XCTestCase {
         XCTAssertEqual(mockConnectionRepository.lastDeletedId, connection.id)
     }
 
+    func testKeychainFailureLeavesConnectionMetadataUntouchedForCreateUpdateAndDelete() async {
+        let connection = Connection(name: "Test", host: "test.com", username: "user", savePassword: true)
+        mockKeychainService.mockError = AppError.keychainSaveFailed
+
+        await sut.saveConnection(connection, password: "secret")
+        XCTAssertFalse(mockConnectionRepository.saveCalled)
+        XCTAssertEqual(sut.error, .keychainSaveFailed)
+
+        mockConnectionRepository.mockConnections = [connection]
+        mockKeychainService.mockPasswords[connection.id] = "old"
+        await sut.updateConnection(connection, password: "changed")
+        XCTAssertFalse(mockConnectionRepository.updateCalled)
+        XCTAssertEqual(mockKeychainService.mockPasswords[connection.id], "old")
+
+        mockKeychainService.mockError = AppError.keychainDeleteFailed
+        await sut.deleteConnection(connection)
+        XCTAssertFalse(mockConnectionRepository.deleteCalled)
+        XCTAssertEqual(sut.error, .keychainDeleteFailed)
+        XCTAssertEqual(mockKeychainService.mockPasswords[connection.id], "old")
+    }
+
+    func testMetadataFailureRestoresPreviousCredentialForCreateUpdateAndDelete() async {
+        let connection = Connection(name: "Test", host: "test.com", username: "user", savePassword: true)
+        mockConnectionRepository.mockError = AppError.saveFailed("connection")
+
+        await sut.saveConnection(connection, password: "new")
+        XCTAssertTrue(mockConnectionRepository.saveCalled)
+        XCTAssertNil(mockKeychainService.mockPasswords[connection.id])
+
+        mockKeychainService.mockPasswords[connection.id] = "old"
+        await sut.updateConnection(connection, password: "changed")
+        XCTAssertTrue(mockConnectionRepository.updateCalled)
+        XCTAssertEqual(mockKeychainService.mockPasswords[connection.id], "old")
+
+        await sut.deleteConnection(connection)
+        XCTAssertTrue(mockConnectionRepository.deleteCalled)
+        XCTAssertEqual(mockKeychainService.mockPasswords[connection.id], "old")
+    }
+
+    func testKeychainReadFailureDoesNotOverwriteStoredCredential() async {
+        let connection = Connection(name: "Test", host: "test.com", username: "user", savePassword: true)
+        mockKeychainService.mockPasswords[connection.id] = "old"
+        mockKeychainService.mockReadError = AppError.keychainReadFailed
+
+        await sut.updateConnection(connection, password: "changed")
+
+        XCTAssertFalse(mockConnectionRepository.updateCalled)
+        XCTAssertFalse(mockKeychainService.savePasswordCalled)
+        XCTAssertEqual(sut.error, .keychainReadFailed)
+        XCTAssertEqual(mockKeychainService.mockPasswords[connection.id], "old")
+    }
+
+    func testSwitchingCredentialTypesRestoresOldPasswordIfS3WriteFails() async {
+        let connection = Connection(name: "Test", host: "test.com", username: "user", savePassword: true)
+        mockConnectionRepository.mockConnections = [connection]
+        mockKeychainService.mockPasswords[connection.id] = "old"
+        var edited = connection
+        edited.connectionType = .s3
+        edited.username = "access-key"
+
+        mockKeychainService.mockS3SaveError = AppError.keychainSaveFailed
+        await sut.updateConnection(edited, password: "secret-key")
+        XCTAssertFalse(mockConnectionRepository.updateCalled)
+        XCTAssertEqual(mockKeychainService.mockPasswords[connection.id], "old")
+
+        mockKeychainService.mockS3SaveError = nil
+        await sut.updateConnection(edited, password: "secret-key")
+        XCTAssertEqual(mockConnectionRepository.mockConnections.first?.connectionType, .s3)
+        XCTAssertNil(mockKeychainService.mockPasswords[connection.id])
+        XCTAssertEqual(mockKeychainService.mockS3Credentials[connection.id]?.accessKeyId, "access-key")
+    }
+
     // MARK: - Folder Tests
 
     func testCreateFolder_Success() async {

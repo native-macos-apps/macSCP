@@ -105,6 +105,24 @@ final class FileEditorViewModelTests: XCTestCase {
         XCTAssertNotNil(sut.error)
     }
 
+    func testSaveKeepsEditsMadeWhileWriteIsInProgress() async {
+        let editor = sut!
+        editor.content = "Version sent to repository"
+        mockFileRepository.beforeWriteFileContent = {
+            await MainActor.run { editor.content = "Newer edit" }
+            await editor.reload()
+        }
+
+        let saved = await editor.save()
+
+        XCTAssertTrue(saved)
+        XCTAssertEqual(mockFileRepository.lastWriteContent, "Version sent to repository")
+        XCTAssertFalse(mockFileRepository.readFileContentCalled)
+        XCTAssertTrue(editor.hasChanges)
+        editor.revertChanges()
+        XCTAssertEqual(editor.content, "Version sent to repository")
+    }
+
     // MARK: - Reload Tests
 
     func testReload_Success() async {
@@ -117,6 +135,19 @@ final class FileEditorViewModelTests: XCTestCase {
         // Then
         XCTAssertTrue(mockFileRepository.readFileContentCalled)
         XCTAssertEqual(sut.content, "Reloaded content")
+    }
+
+    func testReloadPreservesEditsMadeWhileReadIsInProgress() async {
+        let editor = sut!
+        mockFileRepository.mockFileContent = "Remote version"
+        mockFileRepository.beforeReadFileContent = {
+            await MainActor.run { editor.content = "Newer edit" }
+        }
+
+        await editor.reload()
+
+        XCTAssertEqual(editor.content, "Newer edit")
+        XCTAssertTrue(editor.hasChanges)
     }
 
     // MARK: - Search Tests

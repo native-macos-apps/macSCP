@@ -26,9 +26,15 @@ final class KeychainService: KeychainServiceProtocol, Sendable {
     }
 
     func getPassword(for connectionId: UUID) -> String? {
-        guard let data = KeychainStore.read(service: service, account: connectionId.uuidString),
-              let password = String(data: data, encoding: .utf8) else {
+        try? readPassword(for: connectionId)
+    }
+
+    func readPassword(for connectionId: UUID) throws -> String? {
+        guard let data = try KeychainStore.readIfPresent(service: service, account: connectionId.uuidString) else {
             return nil
+        }
+        guard let password = String(data: data, encoding: .utf8) else {
+            throw AppError.keychainReadFailed
         }
         return password
     }
@@ -61,9 +67,15 @@ final class KeychainService: KeychainServiceProtocol, Sendable {
     }
 
     func getS3Credentials(for connectionId: UUID) -> S3Credentials? {
-        guard let data = KeychainStore.read(service: s3Service, account: connectionId.uuidString),
-              let credentials = try? JSONDecoder().decode(S3Credentials.self, from: data) else {
+        try? readS3Credentials(for: connectionId)
+    }
+
+    func readS3Credentials(for connectionId: UUID) throws -> S3Credentials? {
+        guard let data = try KeychainStore.readIfPresent(service: s3Service, account: connectionId.uuidString) else {
             return nil
+        }
+        guard let credentials = try? JSONDecoder().decode(S3Credentials.self, from: data) else {
+            throw AppError.keychainReadFailed
         }
         return credentials
     }

@@ -42,9 +42,9 @@ Không gian làm việc chính của MacSCP thiết kế theo mô hình **Dual-P
 
 ### Flow 2: Truyền tải chéo giữa hai Pane (Cross-Pane Transfer)
 1. Người dùng chọn file/thư mục ở pane nguồn và kéo-thả sang pane đích (hoặc dùng nút hành động transfer).
-2. `CommanderViewModel` xác định cặp `(sourceRepo, targetRepo)`:
+2. `CommanderViewModel` xác định cặp `(sourceRepo, targetRepo)` và lập danh sách file/thư mục trước khi ghi đích. Nếu quét nguồn thất bại thì báo lỗi kèm đường dẫn.
    - **Local → Remote (Upload):** Quét cây thư mục và thực thi qua `BatchTransferCoordinator`.
-   - **Remote → Local (Download):** Tải file/thư mục về đường dẫn hiện tại của Local pane.
+   - **Remote → Local (Download):** Tải file/thư mục về đường dẫn hiện tại của Local pane. Chỉ thay file đích sau khi stream ghi và đóng thành công.
    - **Remote → Remote (Direct Streaming):** Streaming trực tiếp giữa hai máy chủ qua `FileStreamReader`/`writeStream` không tạo file tạm local.
 3. Sau khi hoàn tất, tự động làm mới danh sách file ở pane đích.
 
@@ -94,7 +94,7 @@ Không gian làm việc chính của MacSCP thiết kế theo mô hình **Dual-P
 ---
 
 ## 8. Known Gaps & Technical Debt
-- **P0/P1 — Độ toàn vẹn của cross-pane transfer.** Ghi vào đích local có thể để lại file dở dang. Khi quét nguồn, buffer đầy hoặc lỗi liệt kê có thể làm thiếu file trong batch. Xem [SPEC-06](06-transfer-engine.md#8-known-gaps--technical-debt).
+- ~~**P0/P1 — Độ toàn vẹn của cross-pane transfer**~~ (Đã xử lý — 2026-11-27: chuẩn bị bản thay thế ở đích local và hoàn tất quét nguồn trước khi bắt đầu truyền). Xem [SPEC-06](06-transfer-engine.md).
 - ~~**P0 — Race condition & rò rỉ session:** `switchToLocal`, `switchToServers`, `completeConnect` trong `CommanderViewModel.swift`~~ (Đã xử lý — 2026-11-26).
 - ~~**P0 — `fatalError()` ở `NativeServersTableView.swift:197`**~~ (Đã xử lý — 2026-11-26).
 - ~~**P1 — Trùng lặp batch transfer state với `FileBrowserViewModel`**~~ (Đã xử lý — 2026-11-26: dùng chung `FileTransferManager` với `lastAppliedSnapshotSequence` guard và `transferType` chính xác).

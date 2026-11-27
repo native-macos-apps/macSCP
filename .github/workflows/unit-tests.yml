@@ -1,0 +1,25 @@
+name: macOS unit tests
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  unit-tests:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Run unit tests
+        run: |
+          xcodebuild -version
+          xcodebuild test \
+            -project macSCP.xcodeproj \
+            -scheme macSCP \
+            -destination 'platform=macOS' \
+            -only-testing:macSCPTests \
+            CODE_SIGNING_ALLOWED=NO

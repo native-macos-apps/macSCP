@@ -2,12 +2,12 @@
 //  StreamingFileScanner.swift
 //  macSCP
 //
-//  Producer-consumer streaming file enumerator with bounded buffer and cancellation support
+//  Builds the file and directory manifest consumed by batch transfers
 //
 
 import Foundation
 
-struct TransferQueueItem: Identifiable, Sendable {
+nonisolated struct TransferQueueItem: Identifiable, Sendable {
     let id: UUID
     let localURL: URL?
     let remotePath: String
@@ -38,222 +38,158 @@ struct TransferQueueItem: Identifiable, Sendable {
     }
 }
 
-enum ScannedItemEvent: Sendable {
-    case topLevelFolder(RemoteFile)
-    case directory(remotePath: String)
-    case file(TransferQueueItem)
-    case finished(totalFiles: Int, totalBytes: Int64)
+nonisolated struct TransferScan: Sendable {
+    var items: [TransferQueueItem] = []
+    var directoriesToCreate: [String] = []
+    var topLevelDirectoryNames: [String] = []
 }
 
 enum StreamingFileScanner {
-    /// Streams local files and directories for upload without loading entire trees into memory upfront.
-    static func streamLocalURLs(
-        _ urls: [URL],
-        targetRemotePath: String,
-        bufferSize: Int = 100
-    ) -> AsyncStream<ScannedItemEvent> {
-        AsyncStream(bufferingPolicy: .bufferingNewest(bufferSize)) { continuation in
-            let task = Task.detached(priority: .userInitiated) {
-                var totalFiles = 0
-                var totalBytes: Int64 = 0
-
-                for url in urls {
-                    if Task.isCancelled { break }
-                    guard url.isFileURL else { continue }
-
-                    var isDir: ObjCBool = false
-                    guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) else { continue }
-
-                    if !isDir.boolValue {
-                        let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int64) ?? 0
-                        let remotePath = targetRemotePath.appendingPathComponent(url.lastPathComponent)
-                        let item = TransferQueueItem(
-                            localURL: url,
-                            remotePath: remotePath,
-                            displayName: url.lastPathComponent,
-                            fileSize: size,
-                            isDirectory: false,
-                            isTopLevel: true
-                        )
-                        totalFiles += 1
-                        totalBytes += size
-                        continuation.yield(.file(item))
-                    } else {
-                        let folderName = url.lastPathComponent
-                        let rootRemotePath = targetRemotePath.appendingPathComponent(folderName)
-                        let formattedPath = rootRemotePath.hasSuffix("/") ? rootRemotePath : rootRemotePath + "/"
-                        let topFolder = RemoteFile(
-                            name: folderName,
-                            path: formattedPath,
-                            isDirectory: true,
-                            size: 0,
-                            permissions: "drwxr-xr-x",
-                            modificationDate: Date()
-                        )
-                        continuation.yield(.topLevelFolder(topFolder))
-                        continuation.yield(.directory(remotePath: rootRemotePath))
-
-                        let baseDirURL = url.deletingLastPathComponent()
-                        if let enumerator = FileManager.default.enumerator(
-                            at: url,
-                            includingPropertiesForKeys: [.isDirectoryKey, .fileSizeKey],
-                            options: [.skipsHiddenFiles]
-                        ) {
-                            for case let fileURL as URL in enumerator {
-                                if Task.isCancelled { break }
-
-                                var childIsDir: ObjCBool = false
-                                guard FileManager.default.fileExists(atPath: fileURL.path, isDirectory: &childIsDir) else { continue }
-
-                                let relativePath: String
-                                if fileURL.path.hasPrefix(baseDirURL.path) {
-                                    relativePath = String(fileURL.path.dropFirst(baseDirURL.path.count))
-                                        .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-                                } else {
-                                    relativePath = fileURL.lastPathComponent
-                                }
-                                let childRemotePath = targetRemotePath.appendingPathComponent(relativePath)
-
-                                if childIsDir.boolValue {
-                                    continuation.yield(.directory(remotePath: childRemotePath))
-                                } else {
-                                    let size = (try? FileManager.default.attributesOfItem(atPath: fileURL.path)[.size] as? Int64) ?? 0
-                                    let item = TransferQueueItem(
-                                        localURL: fileURL,
-                                        remotePath: childRemotePath,
-                                        displayName: relativePath,
-                                        fileSize: size,
-                                        isDirectory: false,
-                                        isTopLevel: false
-                                    )
-                                    totalFiles += 1
-                                    totalBytes += size
-                                    continuation.yield(.file(item))
-                                }
-                            }
-                        }
-                    }
-                }
-
-                continuation.yield(.finished(totalFiles: totalFiles, totalBytes: totalBytes))
-                continuation.finish()
-            }
-
-            continuation.onTermination = { _ in
-                task.cancel()
-            }
+    nonisolated static func scanLocalURLs(_ urls: [URL], targetRemotePath: String) async throws -> TransferScan {
+        let worker = Task.detached(priority: .userInitiated) {
+            try buildLocalScan(urls, targetRemotePath: targetRemotePath)
+        }
+        return try await withTaskCancellationHandler {
+            try await worker.value
+        } onCancel: {
+            worker.cancel()
         }
     }
 
-    /// Streams remote files and directories for Commander transfers without unbounded memory allocation.
-    static func streamRemoteFiles(
+    nonisolated private static func buildLocalScan(
+        _ urls: [URL],
+        targetRemotePath: String
+    ) throws -> TransferScan {
+        var scan = TransferScan()
+
+        for url in urls {
+            try Task.checkCancellation()
+            guard url.isFileURL else { throw AppError.invalidPath }
+            let root = url.resolvingSymlinksInPath()
+            let name = url.lastPathComponent
+            let destination = targetRemotePath.appendingPathComponent(name)
+
+            do {
+                let values = try root.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey])
+                if values.isDirectory == true {
+                    scan.topLevelDirectoryNames.append(name)
+                    scan.directoriesToCreate.append(destination)
+                    try scanLocalDirectory(root, name: name, target: destination, into: &scan)
+                } else {
+                    scan.items.append(TransferQueueItem(
+                        localURL: url, remotePath: destination, displayName: name,
+                        fileSize: Int64(values.fileSize ?? 0), isTopLevel: true
+                    ))
+                }
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                throw AppError.unknown("Could not scan '\(url.path)': \(error.localizedDescription)")
+            }
+        }
+
+        try Task.checkCancellation()
+        return scan
+    }
+
+    nonisolated private static func scanLocalDirectory(
+        _ root: URL,
+        name: String,
+        target: String,
+        into scan: inout TransferScan
+    ) throws {
+        let keys: [URLResourceKey] = [.isDirectoryKey, .fileSizeKey, .isSymbolicLinkKey]
+        let fileManager = FileManager.default
+        var enumerationError: AppError?
+        guard let enumerator = fileManager.enumerator(
+            at: root,
+            includingPropertiesForKeys: keys,
+            options: [.skipsHiddenFiles],
+            errorHandler: { url, error in
+                enumerationError = .unknown("Could not read '\(url.path)': \(error.localizedDescription)")
+                return false
+            }
+        ) else {
+            throw AppError.fileReadFailed
+        }
+
+        let rootComponents = root.standardizedFileURL.pathComponents
+        for case let entry as URL in enumerator {
+            try Task.checkCancellation()
+            let components = entry.standardizedFileURL.pathComponents
+            guard components.starts(with: rootComponents), components.count > rootComponents.count else {
+                throw AppError.unknown("Could not determine the relative path for '\(entry.path)'.")
+            }
+
+            let relativePath = components.dropFirst(rootComponents.count).joined(separator: "/")
+            let destination = target.appendingPathComponent(relativePath)
+            let values = try entry.resourceValues(forKeys: Set(keys))
+            var isLinkedDirectory: ObjCBool = false
+            if values.isSymbolicLink == true {
+                guard fileManager.fileExists(atPath: entry.path, isDirectory: &isLinkedDirectory) else {
+                    throw AppError.unknown("Could not read the target of '\(entry.path)'.")
+                }
+            }
+            if values.isDirectory == true || isLinkedDirectory.boolValue {
+                scan.directoriesToCreate.append(destination)
+            } else {
+                scan.items.append(TransferQueueItem(
+                    localURL: entry, remotePath: destination,
+                    displayName: name.appendingPathComponent(relativePath),
+                    fileSize: Int64(values.fileSize ?? 0)
+                ))
+            }
+        }
+
+        if let enumerationError { throw enumerationError }
+    }
+
+    nonisolated static func scanRemoteFiles(
         _ files: [RemoteFile],
         targetBasePath: String,
-        sourceRepo: FileRepositoryProtocol,
-        bufferSize: Int = 100
-    ) -> AsyncStream<ScannedItemEvent> {
-        AsyncStream(bufferingPolicy: .bufferingNewest(bufferSize)) { continuation in
-            let task = Task.detached(priority: .userInitiated) {
-                var totalFiles = 0
-                var totalBytes: Int64 = 0
+        sourceRepo: FileRepositoryProtocol
+    ) async throws -> TransferScan {
+        struct Pending {
+            let file: RemoteFile
+            let target: String
+            let displayName: String
+            let isTopLevel: Bool
+        }
 
-                for file in files {
-                    if Task.isCancelled { break }
-                    let destPath = targetBasePath.appendingPathComponent(file.name)
+        var scan = TransferScan()
+        var pending = files.reversed().map { file in
+            Pending(file: file, target: targetBasePath.appendingPathComponent(file.name),
+                    displayName: file.name, isTopLevel: true)
+        }
 
-                    if file.isDirectory {
-                        let topFolder = RemoteFile(
-                            name: file.name,
-                            path: destPath.hasSuffix("/") ? destPath : destPath + "/",
-                            isDirectory: true,
-                            size: 0,
-                            permissions: file.permissions,
-                            modificationDate: file.modificationDate,
-                            owner: file.owner,
-                            group: file.group
-                        )
-                        continuation.yield(.topLevelFolder(topFolder))
-                        continuation.yield(.directory(remotePath: destPath))
-
-                        // Recursively enumerate directory levels
-                        await enumerateRemoteDirectory(
-                            at: file.path,
-                            relativePrefix: file.name,
-                            targetBaseDir: destPath,
-                            sourceRepo: sourceRepo,
-                            continuation: continuation,
-                            totalFiles: &totalFiles,
-                            totalBytes: &totalBytes
-                        )
-                    } else {
-                        let item = TransferQueueItem(
-                            remotePath: destPath,
-                            displayName: file.name,
-                            fileSize: file.size,
-                            isDirectory: false,
-                            isTopLevel: true,
-                            sourceRemoteFile: file
-                        )
-                        totalFiles += 1
-                        totalBytes += file.size
-                        continuation.yield(.file(item))
-                    }
+        while let entry = pending.popLast() {
+            try Task.checkCancellation()
+            if entry.file.isDirectory {
+                let children: [RemoteFile]
+                do {
+                    children = try await sourceRepo.listFiles(at: entry.file.path)
+                } catch {
+                    if Task.isCancelled || error is CancellationError { throw CancellationError() }
+                    throw AppError.unknown("Could not list '\(entry.file.path)': \(error.localizedDescription)")
                 }
 
-                continuation.yield(.finished(totalFiles: totalFiles, totalBytes: totalBytes))
-                continuation.finish()
-            }
+                scan.directoriesToCreate.append(entry.target)
+                if entry.isTopLevel { scan.topLevelDirectoryNames.append(entry.displayName) }
 
-            continuation.onTermination = { _ in
-                task.cancel()
-            }
-        }
-    }
-
-    private static func enumerateRemoteDirectory(
-        at remoteDirPath: String,
-        relativePrefix: String,
-        targetBaseDir: String,
-        sourceRepo: FileRepositoryProtocol,
-        continuation: AsyncStream<ScannedItemEvent>.Continuation,
-        totalFiles: inout Int,
-        totalBytes: inout Int64
-    ) async {
-        if Task.isCancelled { return }
-
-        guard let children = try? await sourceRepo.listFiles(at: remoteDirPath) else {
-            return
-        }
-
-        for child in children {
-            if Task.isCancelled { break }
-            let childRelative = relativePrefix.appendingPathComponent(child.name)
-            let childTargetPath = targetBaseDir.appendingPathComponent(child.name)
-
-            if child.isDirectory {
-                continuation.yield(.directory(remotePath: childTargetPath))
-                await enumerateRemoteDirectory(
-                    at: child.path,
-                    relativePrefix: childRelative,
-                    targetBaseDir: childTargetPath,
-                    sourceRepo: sourceRepo,
-                    continuation: continuation,
-                    totalFiles: &totalFiles,
-                    totalBytes: &totalBytes
-                )
+                pending.append(contentsOf: children.reversed().map { child in
+                    Pending(file: child, target: entry.target.appendingPathComponent(child.name),
+                            displayName: entry.displayName.appendingPathComponent(child.name), isTopLevel: false)
+                })
             } else {
-                let item = TransferQueueItem(
-                    remotePath: childTargetPath,
-                    displayName: childRelative,
-                    fileSize: child.size,
-                    isDirectory: false,
-                    isTopLevel: false,
-                    sourceRemoteFile: child
-                )
-                totalFiles += 1
-                totalBytes += child.size
-                continuation.yield(.file(item))
+                scan.items.append(TransferQueueItem(
+                    remotePath: entry.target, displayName: entry.displayName,
+                    fileSize: entry.file.size, isTopLevel: entry.isTopLevel,
+                    sourceRemoteFile: entry.file
+                ))
             }
         }
+
+        try Task.checkCancellation()
+        return scan
     }
 }

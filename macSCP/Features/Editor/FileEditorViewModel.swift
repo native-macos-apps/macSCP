@@ -100,28 +100,41 @@ final class FileEditorViewModel {
 
     // MARK: - File Operations
 
-    func save() async {
+    @discardableResult
+    func save() async -> Bool {
+        guard !state.isLoading else { return false }
+        let snapshot = content
+        error = nil
         state = .loading
 
         do {
-            try await fileRepository.writeFileContent(content, to: filePath)
-            savedContent = content
+            try await fileRepository.writeFileContent(snapshot, to: filePath)
+            savedContent = snapshot
             state = .success(())
             AnalyticsService.trackFileSaved(fileExtension: (fileName as NSString).pathExtension)
             logInfo("File saved: \(fileName)", category: s3Session != nil ? .s3 : .sftp)
+            return true
         } catch {
             logError("Failed to save file: \(error)", category: .sftp)
-            state = .error(AppError.from(error))
-            self.error = AppError.from(error)
+            let appError = AppError.from(error)
+            state = .error(appError)
+            self.error = appError
+            return false
         }
     }
 
     func reload() async {
+        guard !state.isLoading else { return }
+        let snapshot = content
+        error = nil
         state = .loading
 
         do {
-            content = try await fileRepository.readFileContent(at: filePath)
-            savedContent = content
+            let reloaded = try await fileRepository.readFileContent(at: filePath)
+            if content == snapshot {
+                content = reloaded
+                savedContent = reloaded
+            }
             state = .success(())
             logInfo("File reloaded: \(fileName)", category: .sftp)
         } catch {

@@ -68,6 +68,8 @@ Cho phép người dùng duyệt và thao tác đối tượng trên **Amazon S3
 | Access Denied / Invalid Credentials | Trả về `AppError` rõ ràng, gợi ý kiểm tra quyền IAM (`s3:ListBucket`, `s3:GetObject`, `s3:PutObject`). |
 | Bucket không tồn tại hoặc sai Region | Báo lỗi kết nối cụ thể. |
 | Rename/Move thư mục có nhiều object | Copy toàn bộ prefix đích trước rồi mới xóa prefix nguồn để tránh mất dữ liệu giữa chừng. |
+| Xóa prefix chỉ thành công với một phần object | Báo số key lỗi và các key lỗi đầu tiên, gồm cả marker nếu có. Đổi tên và di chuyển truyền lỗi này về caller. |
+| Nguồn và đích trùng object hoặc chồng lấn prefix | Báo lỗi trước khi copy hoặc xóa. |
 | Custom Endpoint (MinIO / R2) | Giữ nguyên scheme/host/port của endpoint khi build request và URL. |
 
 ---
@@ -86,7 +88,8 @@ Cho phép người dùng duyệt và thao tác đối tượng trên **Amazon S3
 ---
 
 ## 8. Known Gaps & Technical Debt
-- **P1 — Xóa thư mục có thể báo thành công khi chỉ xóa được một phần.** `deleteDirectory` bỏ lỗi theo từng key trong `DeleteObjectsOutput`, ảnh hưởng cả đổi tên và di chuyển. Xem [báo cáo nợ kỹ thuật](../technical-debt.md#các-khoản-nợ-mở-ngày-2026-11-27).
+- ~~**P1 — Xóa thư mục có thể báo thành công khi chỉ xóa được một phần**~~ (Đã xử lý — 2026-11-27: đọc `DeleteObjectsOutput.errors` trên mọi trang).
+- ~~**P0 — Di chuyển thư mục với prefix chồng lấn có thể xóa cả bản vừa copy**~~ (Đã xử lý — 2026-11-27: kiểm tra prefix trước khi gọi S3 và nhận diện thư mục ở chế độ duyệt toàn tài khoản).
 - ~~**P0 — Force unwrap & Data race:** Force unwrap `s3!` ở `S3Session.swift:64,67` và `S3StreamReader` là `@unchecked Sendable` không lock~~ (Đã xử lý — 2026-11-26: dùng biến local `client` và chuyển `S3StreamReader` sang `actor`).
 - ~~**P1 — God Object:** `S3Session.swift` dài 1,249 dòng~~ (Đã xử lý — 2026-11-26: tách `S3PathResolver`, `S3ErrorMapper`, và `S3Session+Transfers`).
 - ~~**P2 — Logging overhead:** `S3Session.log(_:)` tạo `Task { @MainActor ... }`~~ (Đã xử lý — 2026-11-26: gọi trực tiếp `logInfo(..., category: .s3)`).

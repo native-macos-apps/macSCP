@@ -138,94 +138,90 @@ final class TransferCoreTests: XCTestCase {
 
     // MARK: - StreamingFileScanner Tests
 
+    @MainActor
     func testStreamingFileScanner_LocalURLsTreeAndHiddenSkip() async throws {
         let tempRoot = FileManager.default.temporaryDirectory.appendingPathComponent("scanner_\(UUID().uuidString)")
         let nestedDir = tempRoot.appendingPathComponent("folder/sub")
+        let secondDir = tempRoot.appendingPathComponent("folder/other")
         try FileManager.default.createDirectory(at: nestedDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: secondDir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: tempRoot) }
 
         let topFile = tempRoot.appendingPathComponent("root.txt")
-        let nestedFile = nestedDir.appendingPathComponent("leaf.txt")
-        let hiddenFile = nestedDir.appendingPathComponent(".hidden")
         try Data("hello".utf8).write(to: topFile)
-        try Data("world!".utf8).write(to: nestedFile)
-        try Data("secret".utf8).write(to: hiddenFile)
+        try Data("world!".utf8).write(to: nestedDir.appendingPathComponent("leaf.txt"))
+        try Data("again".utf8).write(to: secondDir.appendingPathComponent("leaf.txt"))
+        try Data("secret".utf8).write(to: nestedDir.appendingPathComponent(".hidden"))
 
-        var topFolders: [RemoteFile] = []
-        var directories: [String] = []
-        var files: [TransferQueueItem] = []
-        var finishedTotals: (Int, Int64)?
-
-        let stream = StreamingFileScanner.streamLocalURLs(
-            [topFile, tempRoot.appendingPathComponent("folder")],
-            targetRemotePath: "/remote"
+        let alias = tempRoot.appendingPathComponent("alias")
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: tempRoot.appendingPathComponent("folder"))
+        let scan = try await StreamingFileScanner.scanLocalURLs(
+            [topFile, alias], targetRemotePath: "/remote"
         )
-        for await event in stream {
-            switch event {
-            case .topLevelFolder(let folder): topFolders.append(folder)
-            case .directory(let path): directories.append(path)
-            case .file(let item): files.append(item)
-            case .finished(let count, let bytes): finishedTotals = (count, bytes)
-            }
-        }
 
-        XCTAssertEqual(topFolders.map(\.name), ["folder"])
-        XCTAssertTrue(directories.contains("/remote/folder"))
-        XCTAssertTrue(directories.contains("/remote/folder/sub"))
-        XCTAssertEqual(files.count, 2)
-        XCTAssertEqual(Set(files.map(\.remotePath)), Set(["/remote/root.txt", "/remote/folder/sub/leaf.txt"]))
-        XCTAssertEqual(finishedTotals?.0, 2)
-        XCTAssertEqual(finishedTotals?.1, 11)
+        XCTAssertEqual(scan.topLevelDirectoryNames, ["alias"])
+        XCTAssertEqual(Set(scan.directoriesToCreate), ["/remote/alias", "/remote/alias/sub", "/remote/alias/other"])
+        XCTAssertEqual(scan.items.count, 3)
+        XCTAssertEqual(Set(scan.items.map(\.remotePath)),
+                       ["/remote/root.txt", "/remote/alias/sub/leaf.txt", "/remote/alias/other/leaf.txt"])
+        XCTAssertEqual(scan.items.reduce(0) { $0 + $1.fileSize }, 16)
     }
 
-    func testStreamingFileScanner_RemoteFilesTree() async {
-        final class TreeMockRepo: FileRepositoryProtocol, @unchecked Sendable {
-            func listFiles(at path: String) async throws -> [RemoteFile] {
-                if path == "/src/dir" || path == "/src/dir/" {
-                    return [
-                        RemoteFile(name: "nested.txt", path: "/src/dir/nested.txt", isDirectory: false, size: 42, permissions: "-rw-r--r--")
-                    ]
-                }
-                return []
-            }
-            func getFileInfo(at path: String) async throws -> RemoteFile { throw AppError.fileNotFound }
-            func createDirectory(at path: String) async throws {}
-            func createFile(at path: String) async throws {}
-            func delete(at path: String, isDirectory: Bool) async throws {}
-            func rename(from sourcePath: String, to destinationPath: String) async throws {}
-            func copy(from sourcePath: String, to destinationPath: String, isDirectory: Bool) async throws {}
-            func move(from sourcePath: String, to destinationPath: String) async throws {}
-            func download(remotePath: String, to localURL: URL) async throws {}
-            func download(remotePath: String, to localURL: URL, progress: TransferProgressHandler?) async throws {}
-            func upload(localURL: URL, to remotePath: String) async throws {}
-            func upload(localURL: URL, to remotePath: String, progress: TransferProgressHandler?) async throws {}
-            func readFileContent(at path: String) async throws -> String { "" }
-            func writeFileContent(_ content: String, to path: String) async throws {}
-            func getRealPath(at path: String) async throws -> String { path }
-            func openStreamReader(at path: String) async throws -> FileStreamReader { fatalError() }
-            func writeStream(from reader: FileStreamReader, to path: String, totalSize: Int64?, progress: TransferProgressHandler?) async throws {}
+    @MainActor
+    func testStreamingFileScanner_RemoteFilesTree() async throws {
+        let repo = MockFileRepository()
+        repo.mockDirectoryContents["/src/dir"] = (1...250).map {
+            RemoteFile(name: "item-\($0)", path: "/src/dir/item-\($0)", isDirectory: false, size: 42, permissions: "-rw-r--r--")
         }
+        let dir = RemoteFile(name: "dir", path: "/src/dir", isDirectory: true, size: 0, permissions: "drwxr-xr-x")
+        let single = RemoteFile(name: "top.txt", path: "/src/top.txt", isDirectory: false, size: 10, permissions: "-rw-r--r--")
 
-        let dirFile = RemoteFile(name: "dir", path: "/src/dir", isDirectory: true, size: 0, permissions: "drwxr-xr-x")
-        let singleFile = RemoteFile(name: "top.txt", path: "/src/top.txt", isDirectory: false, size: 10, permissions: "-rw-r--r--")
+        let scan = try await StreamingFileScanner.scanRemoteFiles([dir, single], targetBasePath: "/dst", sourceRepo: repo)
 
-        var files: [TransferQueueItem] = []
-        var dirs: [String] = []
-        let stream = StreamingFileScanner.streamRemoteFiles(
-            [dirFile, singleFile],
-            targetBasePath: "/dst",
-            sourceRepo: TreeMockRepo()
-        )
-        for await event in stream {
-            switch event {
-            case .directory(let path): dirs.append(path)
-            case .file(let item): files.append(item)
-            default: break
+        XCTAssertEqual(scan.directoriesToCreate, ["/dst/dir"])
+        XCTAssertEqual(scan.topLevelDirectoryNames, ["dir"])
+        XCTAssertEqual(scan.items.count, 251)
+        let expected = (1...250).map { "/dst/dir/item-\($0)" } + ["/dst/top.txt"]
+        XCTAssertEqual(scan.items.map(\.remotePath), expected)
+        XCTAssertEqual(scan.items.reduce(0) { $0 + $1.fileSize }, 10_510)
+    }
+
+    @MainActor
+    func testStreamingFileScanner_ReportsRemoteListingErrorWithPath() async throws {
+        let repo = MockFileRepository()
+        repo.mockError = AppError.permissionDenied
+        let dir = RemoteFile(name: "denied", path: "/src/denied", isDirectory: true, size: 0, permissions: "drwxr-xr-x")
+
+        do {
+            _ = try await StreamingFileScanner.scanRemoteFiles([dir], targetBasePath: "/dst", sourceRepo: repo)
+            XCTFail("Expected the scan to fail")
+        } catch let error as AppError {
+            XCTAssertEqual(error, .unknown("Could not list '/src/denied': Permission denied"))
+        }
+    }
+
+    @MainActor
+    func testBatchCancellationCancelsPreparation() async throws {
+        let manager = FileTransferManager()
+        XCTAssertTrue(manager.beginBatchSession())
+        defer { manager.endBatchSession() }
+
+        let (started, continuation) = AsyncStream<Void>.makeStream()
+        let scan = Task {
+            try await manager.prepareScan {
+                continuation.yield(())
+                try await Task.sleep(for: .seconds(5))
+                return TransferScan()
             }
         }
+        for await _ in started { break }
+        manager.cancelBatch()
 
-        XCTAssertEqual(dirs, ["/dst/dir"])
-        XCTAssertEqual(Set(files.map(\.remotePath)), Set(["/dst/dir/nested.txt", "/dst/top.txt"]))
-        XCTAssertEqual(files.reduce(0) { $0 + $1.fileSize }, 52)
+        do {
+            _ = try await scan.value
+            XCTFail("Expected cancellation before transfer")
+        } catch is CancellationError {
+            // Expected
+        }
     }
 }

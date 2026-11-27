@@ -457,48 +457,25 @@ final class CommanderViewModel {
         let targetBasePath = targetVM.currentPath
         let sourceRepo = sourceVM.fileRepository
 
-        var directoriesToCreate: [String] = []
-        var itemsToTransfer: [TransferQueueItem] = []
-        var topLevelDirectoryNames: [String] = []
-
-        // Stream remote file enumeration with bounded memory
-        let stream = StreamingFileScanner.streamRemoteFiles(
-            files,
-            targetBasePath: targetBasePath,
-            sourceRepo: sourceRepo,
-            bufferSize: 100
-        )
-
-        for await event in stream {
-            if Task.isCancelled || transferManager.isCurrentBatchCancelled { break }
-            switch event {
-            case .topLevelFolder(let folder):
-                topLevelDirectoryNames.append(folder.name)
-                targetVM.appendFile(folder)
-            case .directory(let remotePath):
-                directoriesToCreate.append(remotePath)
-            case .file(let item):
-                itemsToTransfer.append(item)
-            case .finished:
-                break
+        do {
+            let scan = try await transferManager.prepareScan {
+                try await StreamingFileScanner.scanRemoteFiles(
+                    files, targetBasePath: targetBasePath, sourceRepo: sourceRepo
+                )
             }
-        }
-
-        guard !itemsToTransfer.isEmpty else {
-            if !directoriesToCreate.isEmpty {
-                let dirMgr = RemoteDirectoryManager(repository: targetVM.fileRepository, maxConcurrency: 3)
-                _ = await dirMgr.createDirectories(directoriesToCreate)
-            }
+            guard !scan.items.isEmpty || !scan.directoriesToCreate.isEmpty else { return }
+            await executeCommanderBatch(
+                items: scan.items,
+                directoriesToCreate: scan.directoriesToCreate,
+                topLevelNames: scan.topLevelDirectoryNames,
+                sourceVM: sourceVM,
+                targetVM: targetVM
+            )
+        } catch is CancellationError {
             return
+        } catch {
+            self.error = AppError.from(error)
         }
-
-        await executeCommanderBatch(
-            items: itemsToTransfer,
-            directoriesToCreate: directoriesToCreate,
-            topLevelNames: topLevelDirectoryNames,
-            sourceVM: sourceVM,
-            targetVM: targetVM
-        )
     }
 
     private func executeCommanderBatch(
@@ -573,7 +550,7 @@ final class CommanderViewModel {
             isUpload: !targetVM.isLocal
         )
 
-        if result.completedFiles > 0 {
+        if result.completedFiles > 0 || !directoriesToCreate.isEmpty {
             await targetVM.loadFiles()
         }
     }

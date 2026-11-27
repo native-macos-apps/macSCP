@@ -22,6 +22,7 @@ final class FileTransferManager {
     var isShowingTransfersPopover: Bool = false
 
     private var transferTasks: [UUID: Task<Void, Never>] = [:]
+    private var batchScanTask: Task<TransferScan, Error>?
     private var currentBatchTracker: BatchProgressTracker?
     private var lastAppliedSnapshotSequence: UInt64 = 0
     private var isBatchCancelled: Bool = false
@@ -186,6 +187,21 @@ final class FileTransferManager {
         isBatchInProgress = false
     }
 
+    func prepareScan(_ scan: @escaping @Sendable () async throws -> TransferScan) async throws -> TransferScan {
+        let task = Task { try await scan() }
+        batchScanTask = task
+        defer { batchScanTask = nil }
+
+        let result = try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
+        }
+        try Task.checkCancellation()
+        if isCurrentBatchCancelled { throw CancellationError() }
+        return result
+    }
+
     func executeBatch(
         title: String,
         items: [TransferQueueItem],
@@ -311,6 +327,7 @@ final class FileTransferManager {
 
     func cancelAllTransfers() {
         isBatchCancelled = true
+        batchScanTask?.cancel()
         activeBatch?.status = .cancelled
         currentBatchTracker?.cancelAll()
 

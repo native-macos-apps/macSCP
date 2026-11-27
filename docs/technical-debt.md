@@ -8,52 +8,60 @@
 
 ### P0 — Ghi stream lỗi làm mất nội dung file đích local
 
-- [ ] **Vị trí:** [LocalFileRepository.swift:290–312](../macSCP/Data/Repositories/LocalFileRepository.swift#L290-L312), [CommanderViewModel.swift:529–545](../macSCP/Features/Commander/CommanderViewModel.swift#L529-L545). `writeStream` xóa file đích rồi ghi thẳng vào đường dẫn cuối. Khi reader ném lỗi hoặc transfer bị hủy giữa chừng, file cũ đã mất và dữ liệu dở dang có thể xuất hiện ở đích. Thử nghiệm với mã repository và reader giả lập xác nhận sau lỗi, file `original` chỉ còn `partial`. Các đường copy local trực tiếp cũng xóa đích trước khi copy ([LocalFileRepository.swift:176–203](../macSCP/Data/Repositories/LocalFileRepository.swift#L176-L203)).
-- **Đề xuất.** Ghi vào file tạm cùng thư mục, đóng và kiểm tra kết quả trước khi thay đích nguyên tử. Dọn file tạm khi ghi lỗi hoặc bị hủy. Kiểm thử cả đích đã tồn tại và đích mới.
+- [x] **Vị trí lúc review:** [LocalFileRepository.swift:290–312](../macSCP/Data/Repositories/LocalFileRepository.swift#L290-L312), [CommanderViewModel.swift:529–545](../macSCP/Features/Commander/CommanderViewModel.swift#L529-L545). `writeStream` xóa file đích rồi ghi thẳng vào đường dẫn cuối. Khi reader ném lỗi hoặc transfer bị hủy giữa chừng, file cũ đã mất và dữ liệu dở dang có thể xuất hiện ở đích. Thử nghiệm với mã repository và reader giả lập xác nhận sau lỗi, file `original` chỉ còn `partial`. Các đường copy local trực tiếp cũng xóa đích trước khi copy ([LocalFileRepository.swift:176–203](../macSCP/Data/Repositories/LocalFileRepository.swift#L176-L203)).
+- **Đã xử lý — 2026-11-27.** Repository local ghi stream và copy vào vùng staging cùng volume. Chỉ thay đích nguyên tử sau khi thao tác thành công. Kiểm thử giữ nguyên đích cũ, không để lại đích mới khi lỗi, hủy giữa chừng và thay thế thư mục.
 
 ### P0 — Editor đánh dấu đã lưu các chỉnh sửa chưa được ghi
 
-- [ ] **Vị trí:** [FileEditorViewModel.swift:103–117](../macSCP/Features/Editor/FileEditorViewModel.swift#L103-L117), [EditorWindowAccessor.swift:86–96](../macSCP/Features/Editor/Components/EditorWindowAccessor.swift#L86-L96). `save()` gửi `content` vào repository, rồi đọc lại `content` sau `await` để cập nhật `savedContent`. Thử nghiệm với repository giả lập trì hoãn ghi cho thấy repository nhận bản cũ, buffer chứa bản mới và `hasChanges == false`. Luồng Save khi đóng cửa sổ chỉ kiểm tra `error`, nên cũng có thể đóng khi còn chỉnh sửa.
-- **Đề xuất.** Ghi và cập nhật `savedContent` bằng cùng một snapshot. Tuần tự hóa save/reload và chỉ tự đóng cửa sổ nếu thao tác lưu thành công và buffer đã sạch. Kiểm thử việc gõ thêm trong lúc chờ ghi.
+- [x] **Vị trí lúc review:** [FileEditorViewModel.swift:103–117](../macSCP/Features/Editor/FileEditorViewModel.swift#L103-L117), [EditorWindowAccessor.swift:86–96](../macSCP/Features/Editor/Components/EditorWindowAccessor.swift#L86-L96). `save()` gửi `content` vào repository, rồi đọc lại `content` sau `await` để cập nhật `savedContent`. Thử nghiệm với repository giả lập trì hoãn ghi cho thấy repository nhận bản cũ, buffer chứa bản mới và `hasChanges == false`. Luồng Save khi đóng cửa sổ chỉ kiểm tra `error`, nên cũng có thể đóng khi còn chỉnh sửa.
+- **Đã xử lý — 2026-11-27.** Editor cập nhật bản đã lưu bằng đúng snapshot gửi cho repository. Chỉnh sửa trong lúc lưu hoặc reload được giữ lại. Luồng xác nhận đóng chờ kết quả lưu và chỉ đóng khi buffer sạch.
 
 ### P1 — Scanner bỏ file khi buffer đầy
 
-- [ ] **Vị trí:** [StreamingFileScanner.swift:50–55](../macSCP/Services/TransferCoordinator/StreamingFileScanner.swift#L50-L55), [StreamingFileScanner.swift:149–155](../macSCP/Services/TransferCoordinator/StreamingFileScanner.swift#L149-L155), [FileBrowserViewModel.swift:585–618](../macSCP/Features/Browser/FileBrowserViewModel.swift#L585-L618), [CommanderViewModel.swift:460–500](../macSCP/Features/Commander/CommanderViewModel.swift#L460-L500). Hai producer dùng `.bufferingNewest(100)` và bỏ qua kết quả `yield`. Hai caller lập batch từ các mục nhận được và bỏ qua tổng trong `.finished`. Thử nghiệm với 250 file và consumer đọc chậm chỉ nhận 99 sự kiện file, dù scanner báo tổng 250. Batch có thể hoàn tất theo danh sách thiếu.
-- **Đề xuất.** Gom logic lập batch dùng chung và dùng cơ chế quét có backpressure hoặc iterator kéo từng phần tử. Kiểm thử thư mục lớn, consumer chậm và đối soát số mục đã quét với số mục được lập lịch.
+- [x] **Vị trí lúc review:** [StreamingFileScanner.swift:50–55](../macSCP/Services/TransferCoordinator/StreamingFileScanner.swift#L50-L55), [StreamingFileScanner.swift:149–155](../macSCP/Services/TransferCoordinator/StreamingFileScanner.swift#L149-L155), [FileBrowserViewModel.swift:585–618](../macSCP/Features/Browser/FileBrowserViewModel.swift#L585-L618), [CommanderViewModel.swift:460–500](../macSCP/Features/Commander/CommanderViewModel.swift#L460-L500). Hai producer dùng `.bufferingNewest(100)` và bỏ qua kết quả `yield`. Hai caller lập batch từ các mục nhận được và bỏ qua tổng trong `.finished`. Thử nghiệm với 250 file và consumer đọc chậm chỉ nhận 99 sự kiện file, dù scanner báo tổng 250. Batch có thể hoàn tất theo danh sách thiếu.
+- **Đã xử lý — 2026-11-27.** Hai entry point dùng chung kết quả `TransferScan`. Kế hoạch truyền chứa toàn bộ mục đã quét và không còn hàng đợi làm rơi sự kiện. Kiểm thử 251 file trong cùng batch.
 
 ### P1 — Lỗi liệt kê thư mục nguồn bị coi như thư mục rỗng
 
-- [ ] **Vị trí:** [StreamingFileScanner.swift:175–187](../macSCP/Services/TransferCoordinator/StreamingFileScanner.swift#L175-L187), [StreamingFileScanner.swift:203–226](../macSCP/Services/TransferCoordinator/StreamingFileScanner.swift#L203-L226), [CommanderViewModel.swift:472–492](../macSCP/Features/Commander/CommanderViewModel.swift#L472-L492). `try?` bỏ lỗi `listFiles` sau khi scanner đã phát sự kiện tạo thư mục đích. Với repository giả lập trả lỗi quyền truy cập, stream vẫn kết thúc bình thường, có một sự kiện thư mục và tổng 0 file. Các nhánh khác vẫn có thể được chuyển, khiến kết quả trông đầy đủ.
-- **Đề xuất.** Truyền lỗi quét kèm đường dẫn đến kết quả batch. Nếu vẫn chuyển các nhánh đọc được, hiển thị kết quả một phần và liệt kê các nhánh thất bại. Kiểm thử lỗi truy cập tại thư mục gốc và thư mục con.
+- [x] **Vị trí lúc review:** [StreamingFileScanner.swift:175–187](../macSCP/Services/TransferCoordinator/StreamingFileScanner.swift#L175-L187), [StreamingFileScanner.swift:203–226](../macSCP/Services/TransferCoordinator/StreamingFileScanner.swift#L203-L226), [CommanderViewModel.swift:472–492](../macSCP/Features/Commander/CommanderViewModel.swift#L472-L492). `try?` bỏ lỗi `listFiles` sau khi scanner đã phát sự kiện tạo thư mục đích. Với repository giả lập trả lỗi quyền truy cập, stream vẫn kết thúc bình thường, có một sự kiện thư mục và tổng 0 file. Các nhánh khác vẫn có thể được chuyển, khiến kết quả trông đầy đủ.
+- **Đã xử lý — 2026-11-27.** Lỗi liệt kê được trả kèm đường dẫn. Browser và Commander dừng trước khi ghi đích nếu chưa có kết quả quét hợp lệ.
 
 ### P1 — Scanner local có thể làm phẳng cây thư mục khi upload
 
-- [ ] **Vị trí:** [StreamingFileScanner.swift:96–118](../macSCP/Services/TransferCoordinator/StreamingFileScanner.swift#L96-L118), [TransferCoreTests.swift:141–178](../macSCPTests/Services/TransferCoreTests.swift#L141-L178). Scanner tính đường dẫn tương đối bằng tiền tố chuỗi và rơi về `lastPathComponent` nếu đường dẫn gốc và đường dẫn do Foundation liệt kê khác cách biểu diễn. XCTest xác nhận file lẽ ra vào `/remote/folder/sub/leaf.txt` bị gửi đến `/remote/leaf.txt`. Thử nghiệm Foundation xác nhận trường hợp `/var` so với `/private/var`.
-- **Đề xuất.** Tính đường dẫn tương đối theo các thành phần URL sau khi chuẩn hóa nhất quán. Báo lỗi nếu không xác định được đường dẫn con. Bổ sung test alias và hai file trùng tên ở hai nhánh.
+- [x] **Vị trí lúc review:** [StreamingFileScanner.swift:96–118](../macSCP/Services/TransferCoordinator/StreamingFileScanner.swift#L96-L118), [TransferCoreTests.swift:141–178](../macSCPTests/Services/TransferCoreTests.swift#L141-L178). Scanner tính đường dẫn tương đối bằng tiền tố chuỗi và rơi về `lastPathComponent` nếu đường dẫn gốc và đường dẫn do Foundation liệt kê khác cách biểu diễn. XCTest xác nhận file lẽ ra vào `/remote/folder/sub/leaf.txt` bị gửi đến `/remote/leaf.txt`. Thử nghiệm Foundation xác nhận trường hợp `/var` so với `/private/var`.
+- **Đã xử lý — 2026-11-27.** Chuẩn hóa URL gốc và tính đường dẫn tương đối theo thành phần, giữ tên thư mục được chọn. Test alias, đường dẫn lồng nhau và file trùng tên ở hai nhánh đều đạt.
 
 ### P1 — S3 bỏ lỗi xóa theo từng object
 
-- [ ] **Vị trí:** [S3Session.swift:241–274](../macSCP/Data/S3/S3Session.swift#L241-L274), [S3Session.swift:277–303](../macSCP/Data/S3/S3Session.swift#L277-L303), [S3Session.swift:367–381](../macSCP/Data/S3/S3Session.swift#L367-L381). `deleteDirectory` bỏ toàn bộ `DeleteObjectsOutput`, trong khi SDK trả lỗi riêng cho từng key qua `errors`. Lỗi xóa marker cũng bị bỏ qua. Xóa, đổi tên hoặc di chuyển thư mục có thể báo thành công dù một phần nguồn vẫn còn.
-- **Đề xuất.** Kiểm tra lỗi theo key và trả kết quả thất bại một phần với các key cần thử lại. Kiểm thử mock trả kết quả hỗn hợp trong cùng response và lỗi xóa marker.
+- [x] **Vị trí lúc review:** [S3Session.swift:241–274](../macSCP/Data/S3/S3Session.swift#L241-L274), [S3Session.swift:277–303](../macSCP/Data/S3/S3Session.swift#L277-L303), [S3Session.swift:367–381](../macSCP/Data/S3/S3Session.swift#L367-L381). `deleteDirectory` bỏ toàn bộ `DeleteObjectsOutput`, trong khi SDK trả lỗi riêng cho từng key qua `errors`. Lỗi xóa marker cũng bị bỏ qua. Xóa, đổi tên hoặc di chuyển thư mục có thể báo thành công dù một phần nguồn vẫn còn.
+- **Đã xử lý — 2026-11-27.** Kiểm tra `DeleteObjectsOutput.errors` ở từng trang. Prefix marker được xử lý trong cùng batch và lỗi trả về bao gồm số key lỗi cùng các key đầu tiên. Kiểm thử response hỗn hợp qua nhiều trang.
 
 ### P1 — SwiftData và Keychain lệch trạng thái khi ghi hoặc xóa thất bại
 
-- [ ] **Vị trí:** [ConnectionListViewModel.swift:136–206](../macSCP/Features/Connections/ConnectionListViewModel.swift#L136-L206). Các thao tác lưu và cập nhật ghi bản ghi trước khi cập nhật Keychain. Nếu Keychain thất bại, metadata mới vẫn tồn tại với credential cũ hoặc thiếu credential. Khi bỏ lưu mật khẩu hoặc xóa kết nối, `try?` che lỗi xóa Keychain và UI có thể báo thành công trong khi credential vẫn còn.
-- **Đề xuất.** Đưa điều phối hai kho vào một luồng persistence với cơ chế bù hoặc đối soát khi chỉ một kho cập nhật thành công. Báo lỗi cleanup và bổ sung test chèn lỗi Keychain cho cả tạo, sửa và xóa.
+- [x] **Vị trí lúc review:** [ConnectionListViewModel.swift:136–206](../macSCP/Features/Connections/ConnectionListViewModel.swift#L136-L206). Các thao tác lưu và cập nhật ghi bản ghi trước khi cập nhật Keychain. Nếu Keychain thất bại, metadata mới vẫn tồn tại với credential cũ hoặc thiếu credential. Khi bỏ lưu mật khẩu hoặc xóa kết nối, `try?` che lỗi xóa Keychain và UI có thể báo thành công trong khi credential vẫn còn.
+- **Đã xử lý — 2026-11-27.** `ConnectionPersistence` phân biệt credential thiếu với lỗi đọc, bù trừ thay đổi Keychain nếu commit thất bại và báo lỗi nếu không thể khôi phục. Thay đổi cùng một profile được điều phối giữa các cửa sổ. Thao tác thay credential không xóa bản cũ trước khi ghi.
 
 ### P2 — Unit tests chưa được chạy tự động trên pull request
 
-- [ ] **Vị trí:** [release.yml:1–12](../.github/workflows/release.yml#L1-L12), [release.yml:49–67](../.github/workflows/release.yml#L49-L67). Workflow duy nhất được theo dõi chạy theo tag hoặc thủ công và archive ứng dụng mà không chạy XCTest. Các lỗi kiểm thử có thể lọt vào nhánh chính.
-- **Đề xuất.** Thêm workflow macOS chạy target `macSCPTests` trên pull request và push vào `main`.
+- [x] **Vị trí lúc review:** [release.yml:1–12](../.github/workflows/release.yml#L1-L12), [release.yml:49–67](../.github/workflows/release.yml#L49-L67). Workflow duy nhất được theo dõi chạy theo tag hoặc thủ công và archive ứng dụng mà không chạy XCTest. Các lỗi kiểm thử có thể lọt vào nhánh chính.
+- **Đã xử lý — 2026-11-27.** Thêm workflow chạy `macSCPTests` trên pull request và push vào `main`. Đã kiểm tra YAML và chạy lệnh tương đương trên máy.
 
 ### P2 — Scanner local dùng API duyệt thư mục đồng bộ trong ngữ cảnh async
 
-- [ ] **Vị trí:** [StreamingFileScanner.swift:96–106](../macSCP/Services/TransferCoordinator/StreamingFileScanner.swift#L96-L106), [project.pbxproj:541](../macSCP.xcodeproj/project.pbxproj#L541). Swift compiler cảnh báo `DirectoryEnumerator.makeIterator` không dùng được từ ngữ cảnh async và sẽ là lỗi khi chuyển sang Swift 6 language mode. Target hiện dùng Swift 5 language mode.
-- **Đề xuất.** Khi sửa bộ quét, cô lập việc duyệt filesystem đồng bộ và kiểm tra lại nguồn scanner ở Swift 6 language mode.
+- [x] **Vị trí lúc review:** [StreamingFileScanner.swift:96–106](../macSCP/Services/TransferCoordinator/StreamingFileScanner.swift#L96-L106), [project.pbxproj:541](../macSCP.xcodeproj/project.pbxproj#L541). Swift compiler cảnh báo `DirectoryEnumerator.makeIterator` không dùng được từ ngữ cảnh async và sẽ là lỗi khi chuyển sang Swift 6 language mode. Target hiện dùng Swift 5 language mode.
+- **Đã xử lý — 2026-11-27.** Vòng duyệt đồng bộ chạy trong tác vụ nền. Scanner và các kiểu dữ liệu truyền qua actor qua kiểm tra kiểu với Swift 6 và MainActor default isolation.
 
 **Kiểm chứng.** Chạy target `macSCPTests` bằng Xcode 27.2. Kết quả 175/176 test case đạt. `testStreamingFileScanner_LocalURLsTreeAndHiddenSkip` thất bại ở hai assertion tại dòng 174 và 176. Các lần chạy được ghi ở phần lịch sử bên dưới phản ánh môi trường tại thời điểm đó.
 
 GitNexus đã được lập chỉ mục tại `c453374`. Impact ghi nhận `CRITICAL` cho `S3Session.deleteDirectory` qua các luồng xóa, dán và đổi tên. Impact ghi nhận `HIGH` cho Editor `save` và các thao tác cập nhật/xóa kết nối qua các entry point UI. Hai scanner và `LocalFileRepository.writeStream` có mức `LOW` theo call graph, với đường gọi qua protocol được đối chiếu thêm trong mã nguồn. Chỉ mục có giới hạn số execution trace nên các số liệu flow phản ánh phần đồ thị truy vấn được.
+
+### Phát hiện khi triển khai
+
+- [x] **P0 — Prefix S3 chồng lấn khi đổi tên hoặc di chuyển.** Copy thư mục vào prefix chồng lấn có thể đặt bản mới trong phạm vi xóa nguồn. [S3Session.swift:357–376](../macSCP/Data/S3/S3Session.swift#L357-L376) kiểm tra trước khi copy/xóa. Test còn xác nhận đường dẫn thư mục giữ được ngữ nghĩa trong chế độ duyệt toàn tài khoản.
+- [ ] **P2 — Khôi phục sau khi app dừng giữa hai lần ghi.** [ConnectionPersistence.swift:52–90](../macSCP/Data/Repositories/ConnectionPersistence.swift#L52-L90) bù trừ khi nhận lỗi trong tiến trình hiện hành. Nếu app bị dừng đột ngột giữa thao tác Keychain và SwiftData thì lần khởi động sau chưa tự đối soát được. Đề xuất dùng journal trong Keychain kèm trạng thái đối soát để khôi phục theo profile.
+- [ ] **P2 — Swift 6 cho toàn bộ target.** [S3Session.swift:19,48](../macSCP/Data/S3/S3Session.swift#L19), [TransferCoreTests.swift:70–74](../macSCPTests/Services/TransferCoreTests.swift#L70-L74). Build Swift 5 vẫn cảnh báo về actor isolation và API khóa đồng bộ trong phần mã cũ ngoài scanner. Đề xuất chuyển từng module, khai báo isolation phù hợp và thay chỗ khóa đồng bộ trong hàm async bằng thao tác scoped.
+
+**Kiểm chứng bản sửa.** Xcode 27.2 chạy 189/189 unit test đạt. Scanner qua kiểm tra kiểu Swift 6 riêng. S3 kiểm thử bằng response giả lập và các lỗi persistence được chèn qua mock.
 
 ## Tổng quan
 
@@ -135,6 +143,7 @@ Tuy nhiên, quá trình phát triển tích lũy một số khoản nợ kỹ th
 * `DataStore.preview` đã dùng `inMemoryOnly: true` (từ P0).
 * `SSHKeyParser.KeyError.unsupportedKeyType` đã đồng bộ thông báo chỉ hỗ trợ `Ed25519 (unencrypted OpenSSH format)`.
 * **Còn tồn đọng (P2):** `AnalyticsService.swift` (321 dòng) chỉ ghi debug log cục bộ nhưng vẫn duy trì nhiều khóa `UserDefaults` và `NSLock` — giữ nguyên để không ảnh hưởng thống kê local hiện có, có thể đơn giản hóa sau.
+* [ ] **P2 — Danh sách file cấp cao nhất trong snapshot cuối:** `macSCP/Domain/Models/BatchTransferProgress.swift:465-468` gán `topFiles` nhưng bỏ qua biến này và xóa các mục đang chờ trước khi tạo snapshot. Kiểm tra hợp đồng của snapshot cuối, rồi chuyển tiếp danh sách hoặc bỏ biến thừa nếu việc xóa là chủ ý.
 
 ### 3.3. ~~Thiếu nhất quán & Xử lý lỗi mong manh~~ (Đã xử lý — 2026-11-26)
 * **Giới hạn `recentTransfers`:** Chuẩn hóa đồng nhất `FileTransferManager.maxRecentTransfers = 30`.

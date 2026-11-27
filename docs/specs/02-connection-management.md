@@ -37,7 +37,7 @@ Cho phép người dùng tạo, lưu trữ, phân loại, tìm kiếm và kết 
      - Nếu `.password`: nhập mật khẩu và tùy chọn `savePassword` (lưu vào Keychain).
      - Nếu `.privateKey`: chọn khóa từ danh sách In-App SSH Keys (`sshKeyId`), có nút "Import Key…" ngay trong form.
    - **S3:** `username` (Access Key ID), Secret Access Key (lưu Keychain), `s3Region`, `s3Bucket` (tùy chọn; để trống để duyệt danh sách bucket), `s3Endpoint` (tùy chọn cho MinIO, R2, DigitalOcean Spaces…).
-4. Validate dữ liệu (`Connection.isValid` / `validationErrors`), lưu `ConnectionEntity` vào SwiftData qua `ConnectionRepository` và lưu credentials (nếu có) vào `KeychainService`.
+4. Validate dữ liệu (`Connection.isValid` / `validationErrors`). `ConnectionPersistence` áp dụng thay đổi credentials trong Keychain trước khi ghi `ConnectionEntity` qua `ConnectionRepository`. Khi SwiftData báo lỗi, khôi phục credentials đã thay đổi.
 
 ### Flow 2: Tổ chức bằng Folder & Tìm kiếm
 - Tạo, đổi tên, xóa `Folder` (`Cmd+Shift+N`); hỗ trợ kéo-thả `Connection` (`Transferable` với UTType `com.macnev2013.macSCP.connection`) vào thư mục.
@@ -86,6 +86,8 @@ Cho phép người dùng tạo, lưu trữ, phân loại, tìm kiếm và kết 
 | :--- | :--- |
 | Xóa Folder đang chứa Connection | Các connection trong folder cần được xử lý an toàn (chuyển về unfoldered / không mất dữ liệu) và cập nhật UI. |
 | Xóa Connection | Xóa cả bản ghi SwiftData lẫn credential tương ứng trong Keychain. |
+| Keychain trả lỗi khi đọc/ghi/xóa credential | Báo lỗi và giữ nguyên metadata. Khôi phục các credential đã đổi trong cùng thao tác nếu cần. |
+| SwiftData trả lỗi sau khi Keychain đã thay đổi | Rollback context và khôi phục credential trước đó. Nếu khôi phục thất bại, thông báo yêu cầu người dùng kiểm tra lại credential. |
 | Connection trỏ tới `sshKeyId` đã bị xóa khỏi Keychain | Báo lỗi rõ ràng khi kết nối, yêu cầu chọn lại SSH key mới. |
 | SFTP dùng port khác 22 | `displayHost` hiển thị `host:port`; port 22 chỉ hiển thị `host`. |
 
@@ -105,5 +107,6 @@ Cho phép người dùng tạo, lưu trữ, phân loại, tìm kiếm và kết 
 ---
 
 ## 8. Known Gaps & Technical Debt
-- **P1 — SwiftData và Keychain có thể lệch trạng thái.** Metadata được commit trước khi cập nhật credential. Lỗi xóa Keychain có thể bị bỏ qua. Xem [báo cáo nợ kỹ thuật](../technical-debt.md#các-khoản-nợ-mở-ngày-2026-11-27).
+- ~~**P1 — SwiftData và Keychain có thể lệch trạng thái khi thao tác trả lỗi**~~ (Đã xử lý — 2026-11-27: điều phối ghi, báo lỗi rõ và bù trừ khi commit thất bại).
+- **P2 — Khôi phục sau khi tiến trình bị dừng giữa hai lần ghi.** Cơ chế bù trừ chạy trong tiến trình hiện hành. Chưa có journal để đối soát lần khởi động sau.
 - ~~`KeychainService.swift` đang trùng lặp boilerplate CRUD giữa Password và S3 Credentials~~ (Đã xử lý — 2026-11-26: gom vào `KeychainStore` dùng chung với `SSHKeyStorageService`).

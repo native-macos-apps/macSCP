@@ -261,23 +261,6 @@ final class FileBrowserViewModel {
 
     // MARK: - Navigation
 
-    /// Appends or updates a file in the files list without triggering full reload/loading state
-    func appendFile(_ file: RemoteFile) {
-        let cleanPath = file.path.trimmingCharacters(in: ["/"])
-        if let idx = files.firstIndex(where: {
-            $0.name == file.name || $0.path.trimmingCharacters(in: ["/"]) == cleanPath
-        }) {
-            files[idx] = file
-        } else {
-            files.append(file)
-        }
-        if case .loading = state {
-            state = .success(())
-        } else if case .idle = state {
-            state = .success(())
-        }
-    }
-
     func loadFiles(showLoading: Bool = false) async {
         if showLoading || files.isEmpty {
             state = .loading
@@ -582,40 +565,22 @@ final class FileBrowserViewModel {
         }
         defer { transferManager.endBatchSession() }
 
-        let targetPath = self.currentPath
-        var directoriesToCreate: [String] = []
-        var filesToUpload: [TransferQueueItem] = []
-        var topLevelDirectoryNames: [String] = []
-
-        let stream = StreamingFileScanner.streamLocalURLs(urls, targetRemotePath: targetPath, bufferSize: 100)
-        for await event in stream {
-            if Task.isCancelled || transferManager.isCurrentBatchCancelled { break }
-            switch event {
-            case .topLevelFolder(let folder):
-                topLevelDirectoryNames.append(folder.name)
-                appendFile(folder)
-            case .directory(let remotePath):
-                directoriesToCreate.append(remotePath)
-            case .file(let item):
-                filesToUpload.append(item)
-            case .finished:
-                break
+        let targetPath = currentPath
+        do {
+            let scan = try await transferManager.prepareScan {
+                try await StreamingFileScanner.scanLocalURLs(urls, targetRemotePath: targetPath)
             }
-        }
-
-        guard !filesToUpload.isEmpty else {
-            if !directoriesToCreate.isEmpty {
-                let dirMgr = RemoteDirectoryManager(repository: fileRepository, maxConcurrency: 3)
-                _ = await dirMgr.createDirectories(directoriesToCreate)
-            }
+            guard !scan.items.isEmpty || !scan.directoriesToCreate.isEmpty else { return }
+            await executeUploadBatch(
+                items: scan.items,
+                directoriesToCreate: scan.directoriesToCreate,
+                topLevelNames: scan.topLevelDirectoryNames
+            )
+        } catch is CancellationError {
             return
+        } catch {
+            self.error = AppError.from(error)
         }
-
-        await executeUploadBatch(
-            items: filesToUpload,
-            directoriesToCreate: directoriesToCreate,
-            topLevelNames: topLevelDirectoryNames
-        )
     }
 
     private func executeUploadBatch(
@@ -670,7 +635,7 @@ final class FileBrowserViewModel {
             isUpload: true
         )
 
-        if result.completedFiles > 0 {
+        if result.completedFiles > 0 || !directoriesToCreate.isEmpty {
             await loadFiles()
         }
     }

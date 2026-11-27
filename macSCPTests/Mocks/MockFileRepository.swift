@@ -53,6 +53,8 @@ final class MockFileRepository: FileRepositoryProtocol, @unchecked Sendable {
     var mockRealPath: String = "/"
     var mockDirectoryContents: [String: [RemoteFile]] = [:]
     var mockError: Error?
+    var beforeReadFileContent: (@Sendable () async -> Void)?
+    var beforeWriteFileContent: (@Sendable () async -> Void)?
 
     // MARK: - Protocol Implementation
 
@@ -148,6 +150,7 @@ final class MockFileRepository: FileRepositoryProtocol, @unchecked Sendable {
         readFileContentCalled = true
         lastReadPath = path
         if let error = mockError { throw error }
+        await beforeReadFileContent?()
         return mockFileContent
     }
 
@@ -156,6 +159,7 @@ final class MockFileRepository: FileRepositoryProtocol, @unchecked Sendable {
         lastWriteContent = content
         lastWritePath = path
         if let error = mockError { throw error }
+        await beforeWriteFileContent?()
     }
 
     func getRealPath(at path: String) async throws -> String {

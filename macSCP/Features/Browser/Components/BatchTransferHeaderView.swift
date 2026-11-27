@@ -12,7 +12,6 @@ struct BatchTransferHeaderView: View {
     var activeCount: Int = 0
     let onCancel: () -> Void
     var onRetryFailed: (() -> Void)? = nil
-    var onClear: (() -> Void)? = nil
 
     private var statusColor: Color {
         switch batch.status {
@@ -45,19 +44,25 @@ struct BatchTransferHeaderView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            // Header Row: Icon, Title, Actions
-            HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
                 Image(systemName: statusIcon)
-                    .font(.system(size: 13))
+                    .font(.system(size: 12))
                     .foregroundStyle(statusColor)
 
                 Text(batch.title)
                     .font(.system(size: 12, weight: .semibold))
                     .lineLimit(1)
                     .truncationMode(.middle)
+                    .help(batch.title)
 
-                Spacer()
+                Spacer(minLength: 4)
+
+                Text("\(Int(batch.fractionCompleted * 100))%")
+                    .font(.system(size: 11, weight: .semibold))
+                    .monospacedDigit()
+                    .foregroundStyle(statusColor)
+                    .fixedSize()
 
                 if batch.isInProgress {
                     Button("Cancel Batch") {
@@ -66,84 +71,42 @@ struct BatchTransferHeaderView: View {
                     .buttonStyle(.plain)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.red)
-                } else {
-                    HStack(spacing: 8) {
-                        if batch.hasFailures, let onRetryFailed {
-                            Button("Retry Failed") {
-                                onRetryFailed()
-                            }
-                            .buttonStyle(.plain)
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(.blue)
-                        }
-
-                        if let onClear {
-                            Button("Clear") {
-                                onClear()
-                            }
-                            .buttonStyle(.plain)
-                            .font(.system(size: 11, weight: .regular))
-                            .foregroundStyle(.secondary)
-                        }
-                    }
+                    .fixedSize()
+                } else if batch.hasFailures, let onRetryFailed {
+                    Button("Retry Failed", action: onRetryFailed)
+                        .buttonStyle(.plain)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.blue)
+                        .fixedSize()
                 }
             }
 
-            // Linear Progress Bar
-            ProgressView(value: batch.fractionCompleted)
-                .progressViewStyle(.linear)
-                .tint(statusColor)
+            Text(progressSummary)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
 
-            // Progress Text & Percentage
-            HStack {
-                Text(batch.progressText)
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
-
-                Spacer()
-
-                Text("\(Int(batch.fractionCompleted * 100))%")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.secondary)
-            }
-
-            // Stat Badges: Active, Queued, Completed, Failed
-            HStack(spacing: 8) {
-                if batch.isInProgress && activeCount > 0 {
-                    statBadge(label: "Active", count: activeCount, color: .blue)
-                }
-                if batch.isInProgress && batch.queuedFiles > 0 {
-                    statBadge(label: "Queued", count: batch.queuedFiles, color: .secondary)
-                }
-                if batch.completedFiles > 0 {
-                    statBadge(label: "Done", count: batch.completedFiles, color: .green)
-                }
-                if batch.failedFiles > 0 {
-                    statBadge(label: "Failed", count: batch.failedFiles, color: .red)
-                }
-                if batch.cancelledFiles > 0 {
-                    statBadge(label: "Cancelled", count: batch.cancelledFiles, color: .gray)
-                }
-                Spacer()
+            if batch.isInProgress {
+                ProgressView(value: batch.fractionCompleted)
+                    .progressViewStyle(.linear)
+                    .controlSize(.mini)
+                    .tint(statusColor)
+                    .accessibilityLabel("Batch progress")
             }
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 10)
+        .padding(.vertical, 6)
         .background(statusColor.opacity(0.06))
     }
 
-    private func statBadge(label: String, count: Int, color: Color) -> some View {
-        HStack(spacing: 3) {
-            Circle()
-                .fill(color)
-                .frame(width: 5, height: 5)
-            Text("\(label): \(count)")
-                .font(.system(size: 9, weight: .medium))
-                .foregroundStyle(color)
+    private var progressSummary: String {
+        var parts = [batch.progressText]
+        if batch.isInProgress && activeCount > 0 {
+            parts.append("\(activeCount) active")
         }
-        .padding(.horizontal, 5)
-        .padding(.vertical, 2)
-        .background(color.opacity(0.1))
-        .clipShape(RoundedRectangle(cornerRadius: 4))
+        if batch.isInProgress && batch.queuedFiles > 0 {
+            parts.append("\(batch.queuedFiles) queued")
+        }
+        return parts.joined(separator: " • ")
     }
 }

@@ -29,7 +29,7 @@ related_debt:
 ## 2. User Flows & Hành vi chính
 
 ### Flow 1: Batch Transfer (Upload / Download / Cross-Pane)
-1. **Scan cây thư mục (`StreamingFileScanner`):** Quét danh sách file (`[TransferQueueItem]`) và danh sách thư mục cần tạo (`directoriesToCreate`) theo thứ tự độ sâu.
+1. **Scan cây thư mục (`StreamingFileScanner`):** Tạo `TransferScan` gồm file, thư mục cần tạo và tên thư mục gốc để đặt tiêu đề. Cả Browser và Commander dùng kết quả này. Nếu lỗi hoặc hủy trong lúc quét thì dừng trước khi tạo hoặc ghi đích.
 2. **Tạo thư mục đích (`RemoteDirectoryManager`):** Tạo các thư mục đích theo thứ tự độ sâu với concurrency tối đa `3`, theo dõi lỗi từng thư mục cha để bỏ qua các file con phụ thuộc nếu thư mục cha tạo thất bại.
 3. **Worker Pool giới hạn đồng thời (`BatchTransferCoordinator.executeBatch`):**
    - Số luồng đồng thời cấu hình bởi `TransferSettings.shared.maxConcurrentTransfers` (giá trị `1...8`, mặc định `3`; coordinator clamp `1...16`).
@@ -37,6 +37,7 @@ related_debt:
 4. **Retry Policy (`TransferRetryPolicy`):** Tự động thử lại khi gặp lỗi mạng tạm thời với cơ chế backoff; không retry khi đã bị hủy (cancelled).
 5. **Cập nhật tiến độ (`BatchProgressTracker` → `BatchProgressSnapshot`):** Phát snapshot bất đồng bộ về UI (progress tổng, số file thành công/lỗi/hủy, tốc độ, danh sách active/recent transfers).
 6. **Hủy truyền tải (Cancellation):** Người dùng bấm Cancel → lan truyền hủy đến tất cả worker đang chạy, ngừng lập lịch item mới, cập nhật trạng thái `.cancelled`.
+7. **Xem chi tiết trong Transfers:** Commander và File Browser dùng bố cục chung. Phần tóm tắt hiển thị trạng thái, phần trăm và thống kê. Thanh tiến độ tổng chỉ hiện khi batch đang chạy. Nút Clear nằm ở đầu popover.
 
 ### Flow 2: Zero-Disk Remote-to-Remote Streaming (`RemoteStreamTransferEngine`)
 1. Khi truyền file giữa hai remote repository (ví dụ SFTP → S3 hoặc SFTP A → SFTP B):
@@ -70,6 +71,9 @@ related_debt:
 | Tạo thư mục cha thất bại | Ghi nhận lỗi vào tracker, không đẩy file con vào vòng lặp lỗi vô ích. |
 | Đã có batch đang chạy và người dùng kéo thêm batch mới | Báo đang có batch và yêu cầu người dùng chờ hoặc hủy batch trước. |
 | File có kích thước 0 byte | Vẫn tạo file thành công, không chia cho 0 khi tính `fractionCompleted`. |
+| Transfer chỉ gồm thư mục rỗng | Tạo thư mục qua cùng batch coordinator để hiển thị kết quả và lỗi. |
+| Lỗi giữa chừng khi ghi stream vào đích local | Giữ bản đích cũ và dọn bản ghi tạm. Chỉ thay đích khi ghi và đóng hoàn tất. |
+| Liệt kê thư mục nguồn thất bại | Hiển thị lỗi kèm đường dẫn nguồn. Batch chưa bắt đầu tạo đích. |
 
 ---
 
@@ -84,15 +88,15 @@ related_debt:
 - [ ] Upload/Download thư mục nhiều cấp với số luồng cấu hình từ `Settings > Transfers` (1–8 streams) hoạt động ổn định.
 - [ ] Cancel batch dừng toàn bộ tác vụ nhanh chóng và giải phóng tài nguyên/stream.
 - [ ] Truyền file giữa hai kết nối remote khác nhau hoạt động trực tiếp qua stream không tốn dung lượng ổ đĩa tạm.
+- [ ] Danh sách Transfers co theo nội dung khi có tối đa 6 mục vừa vùng hiển thị và cuộn được khi danh sách dài hơn. Tên file hiển thị tối đa 2 dòng và có thể xem đầy đủ khi rê chuột.
 
 ---
 
 ## 8. Known Gaps & Technical Debt
-- **P0 — Ghi stream xuống đích local có thể làm mất file cũ khi ghi lỗi hoặc bị hủy.**
-- **P1 — Scanner có thể bỏ mục khi buffer đầy.** Hai caller lập batch từ các sự kiện nhận được và bỏ qua tổng số mục đã quét.
-- **P1 — Lỗi liệt kê thư mục remote bị bỏ qua.** Batch có thể tạo thư mục đích rỗng rồi hoàn tất dù thiếu file nguồn.
-- **P1 — Scanner local có thể làm phẳng cây thư mục.** So sánh tiền tố chuỗi thất bại khi Foundation liệt kê qua alias khác với đường dẫn đầu vào.
-- **P2 — Scanner local duyệt `DirectoryEnumerator` từ ngữ cảnh async.** Compiler cảnh báo đường này sẽ lỗi ở Swift 6 language mode.
+- ~~**P0 — Ghi stream xuống đích local có thể làm mất file cũ khi lỗi hoặc hủy**~~ (Đã xử lý — 2026-11-27: staging cùng volume và thay đích nguyên tử).
+- ~~**P1 — Scanner có thể bỏ mục khi buffer đầy hoặc khi liệt kê nguồn lỗi**~~ (Đã xử lý — 2026-11-27: trả manifest đầy đủ hoặc lỗi có đường dẫn).
+- ~~**P1 — Scanner local có thể làm phẳng cây thư mục**~~ (Đã xử lý — 2026-11-27: tính theo thành phần đường dẫn đã chuẩn hóa).
+- ~~**P2 — Scanner local duyệt `DirectoryEnumerator` từ ngữ cảnh async**~~ (Đã xử lý — 2026-11-27: vòng duyệt đồng bộ trên tác vụ nền).
 - Chi tiết và đề xuất xử lý nằm trong [báo cáo nợ kỹ thuật](../technical-debt.md#các-khoản-nợ-mở-ngày-2026-11-27).
 - ~~**P0 — `CancellationBox` data race**~~ (Đã xử lý — 2026-11-26: thay bằng `OSAllocatedUnfairLock` lưu `CancellationState`).
 - ~~**P1 — Trùng lặp Batch state & thiếu sequence guard**~~ (Đã xử lý — 2026-11-26: gom vào `FileTransferManager` với `lastAppliedSnapshotSequence` guard cho cả `FileBrowserViewModel` và `CommanderViewModel`).

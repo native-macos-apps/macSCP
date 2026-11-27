@@ -14,6 +14,9 @@ protocol KeychainServiceProtocol: Sendable {
     /// Retrieves a password for a connection
     func getPassword(for connectionId: UUID) -> String?
 
+    /// Distinguishes a missing password from a failed Keychain read.
+    func readPassword(for connectionId: UUID) throws -> String?
+
     /// Deletes a password for a connection
     func deletePassword(for connectionId: UUID) throws
 
@@ -30,6 +33,9 @@ protocol KeychainServiceProtocol: Sendable {
 
     /// Retrieves S3 credentials for a connection
     func getS3Credentials(for connectionId: UUID) -> S3Credentials?
+
+    /// Distinguishes missing credentials from a failed Keychain read.
+    func readS3Credentials(for connectionId: UUID) throws -> S3Credentials?
 
     /// Deletes S3 credentials for a connection
     func deleteS3Credentials(for connectionId: UUID) throws

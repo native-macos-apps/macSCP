@@ -88,22 +88,19 @@ final class ConnectionRepository: ConnectionRepositoryProtocol, @unchecked Senda
 
         let entity = ConnectionMapper.toEntity(connection)
 
-        // Set folder if specified
-        if let folderId = connection.folderId {
-            let folderDescriptor = FetchDescriptor<FolderEntity>(
-                predicate: #Predicate<FolderEntity> { $0.id == folderId }
-            )
-            if let folder = try? context.fetch(folderDescriptor).first {
-                entity.folder = folder
-            }
-        }
-
-        context.insert(entity)
-
         do {
+            if let folderId = connection.folderId {
+                let folderDescriptor = FetchDescriptor<FolderEntity>(
+                    predicate: #Predicate<FolderEntity> { $0.id == folderId }
+                )
+                entity.folder = try context.fetch(folderDescriptor).first
+            }
+
+            context.insert(entity)
             try context.save()
             logInfo("Saved connection: \(connection.name)", category: .database)
         } catch {
+            context.rollback()
             logError("Failed to save connection: \(error)", category: .database)
             throw AppError.saveFailed("connection")
         }
@@ -121,23 +118,24 @@ final class ConnectionRepository: ConnectionRepositoryProtocol, @unchecked Senda
                 throw AppError.entityNotFound
             }
 
-            ConnectionMapper.update(entity, from: connection)
-
-            // Update folder reference
+            let folder: FolderEntity?
             if let folderId = connection.folderId {
                 let folderDescriptor = FetchDescriptor<FolderEntity>(
                     predicate: #Predicate<FolderEntity> { $0.id == folderId }
                 )
-                entity.folder = try? context.fetch(folderDescriptor).first
+                folder = try context.fetch(folderDescriptor).first
             } else {
-                entity.folder = nil
+                folder = nil
             }
+            ConnectionMapper.update(entity, from: connection)
+            entity.folder = folder
 
             try context.save()
             logInfo("Updated connection: \(connection.name)", category: .database)
         } catch let error as AppError {
             throw error
         } catch {
+            context.rollback()
             logError("Failed to update connection: \(error)", category: .database)
             throw AppError.saveFailed("connection")
         }
@@ -161,6 +159,7 @@ final class ConnectionRepository: ConnectionRepositoryProtocol, @unchecked Senda
         } catch let error as AppError {
             throw error
         } catch {
+            context.rollback()
             logError("Failed to delete connection: \(error)", category: .database)
             throw AppError.deleteFailed("connection")
         }

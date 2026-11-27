@@ -10,11 +10,9 @@ import SwiftUI
 struct TransfersPopover: View {
     @Bindable var viewModel: FileBrowserViewModel
 
-    private var needsScrolling: Bool {
-        viewModel.allTransfers.count > 5
-    }
-
     var body: some View {
+        let transfers = Array(viewModel.allTransfers.prefix(60))
+
         VStack(spacing: 0) {
             header
             Divider()
@@ -28,23 +26,22 @@ struct TransfersPopover: View {
                     },
                     onRetryFailed: {
                         Task { await viewModel.retryFailedTransfers() }
-                    },
-                    onClear: {
-                        viewModel.clearCompletedTransfers()
                     }
                 )
                 Divider()
             }
 
-            if viewModel.allTransfers.isEmpty && viewModel.activeBatch == nil {
+            if transfers.isEmpty && viewModel.activeBatch == nil {
                 emptyState
-            } else if needsScrolling {
-                scrollableTransfersList
-            } else {
-                staticTransfersList
+            } else if !transfers.isEmpty {
+                TransferItemsList(
+                    transfers: transfers,
+                    onCancel: { viewModel.cancelTransfer($0) },
+                    onRemove: { viewModel.removeTransfer($0) }
+                )
             }
         }
-        .frame(width: 340)
+        .frame(width: TransferItemsList.popoverWidth)
     }
 
     private var header: some View {
@@ -89,39 +86,43 @@ struct TransfersPopover: View {
         .frame(maxWidth: .infinity)
         .padding(.vertical, 24)
     }
+}
 
-    // When few items, use a plain VStack so it sizes to content exactly
-    private var staticTransfersList: some View {
-        VStack(spacing: 0) {
-            transferItems
-        }
-    }
+struct TransferItemsList: View {
+    static let popoverWidth: CGFloat = 440
 
-    // When many items, use ScrollView with a fixed max height
-    private var scrollableTransfersList: some View {
-        ScrollView {
-            LazyVStack(spacing: 0) {
-                transferItems
+    let transfers: [TransferProgress]
+    let onCancel: (TransferProgress) -> Void
+    let onRemove: (TransferProgress) -> Void
+
+    var body: some View {
+        ViewThatFits(in: .vertical) {
+            if transfers.count <= 6 {
+                VStack(spacing: 0) {
+                    transferItems
+                }
+                .fixedSize(horizontal: false, vertical: true)
+            }
+
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    transferItems
+                }
             }
         }
-        .frame(maxHeight: 380)
+        .frame(maxHeight: 420)
     }
 
     @ViewBuilder
     private var transferItems: some View {
-        let items = Array(viewModel.allTransfers.prefix(60))
-        ForEach(items) { transfer in
+        ForEach(transfers) { transfer in
             TransferItemView(
                 transfer: transfer,
-                onCancel: {
-                    viewModel.cancelTransfer(transfer)
-                },
-                onRemove: {
-                    viewModel.removeTransfer(transfer)
-                }
+                onCancel: { onCancel(transfer) },
+                onRemove: { onRemove(transfer) }
             )
 
-            if transfer.id != items.last?.id {
+            if transfer.id != transfers.last?.id {
                 Divider()
                     .padding(.leading, 54) // Aligns with filename: 16 padding + 10 spacing + 28 icon
             }
@@ -153,9 +154,11 @@ struct TransferItemView: View {
                             .foregroundStyle(.blue)
                     }
                     Text(transfer.fileName)
-                        .font(.system(size: 12, weight: .medium))
-                        .lineLimit(1)
+                        .font(.system(size: 13, weight: .medium))
+                        .lineLimit(2)
                         .truncationMode(.middle)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .help(transfer.fileName)
 
                     if transfer.isDirectory && transfer.itemCount > 0 {
                         Text("(\(transfer.itemCount) \(transfer.itemCount == 1 ? "item" : "items"))")

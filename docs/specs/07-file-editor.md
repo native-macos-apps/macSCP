@@ -32,8 +32,8 @@ Cho phép người dùng mở và chỉnh sửa trực tiếp các file văn b�
 4. `EditorStatusBar` hiển thị thời gian thực: số dòng (`lineCount`), số từ (`wordCount`), số ký tự (`characterCount`).
 
 ### Flow 2: Lưu, Tải lại & Hoàn tác
-- **Save (`save()`):** Ghi nội dung trực tiếp lên remote qua `fileRepository.writeFileContent(content, to: filePath)`, cập nhật `savedContent = content`.
-- **Reload (`reload()`):** Đọc lại phiên bản mới nhất từ server, ghi đè buffer hiện tại.
+- **Save (`save()`):** Chụp snapshot buffer, ghi qua repository và cập nhật `savedContent` bằng snapshot đã ghi thành công. Chỉnh sửa phát sinh trong khi ghi vẫn được đánh dấu chưa lưu.
+- **Reload (`reload()`):** Đọc phiên bản mới nhất và áp dụng nếu buffer chưa đổi trong lúc đọc. Mỗi cửa sổ thực hiện tối đa một Save hoặc Reload tại một thời điểm.
 - **Revert (`revertChanges()`):** Hoàn tác toàn bộ chỉnh sửa cục bộ về `savedContent` mà không cần gọi mạng.
 
 ### Flow 3: Tìm kiếm & Thay thế (`SearchReplaceBar`)
@@ -44,6 +44,7 @@ Cho phép người dùng mở và chỉnh sửa trực tiếp các file văn b�
 
 ### Flow 4: Đóng cửa sổ & Dọn dẹp Session
 - Khi đóng `FileEditorWindow`, gọi `cleanup()` để ngắt kết nối `sftpSession` hoặc `s3Session` riêng (nếu editor tự sở hữu session).
+- Nếu người dùng chọn lưu trong hộp thoại xác nhận, chỉ tự đóng khi lưu thành công và buffer đã sạch.
 
 ---
 
@@ -86,5 +87,5 @@ Cho phép người dùng mở và chỉnh sửa trực tiếp các file văn b�
 ---
 
 ## 8. Known Gaps & Technical Debt
-- **P0 — Editor có thể đánh dấu đã lưu các chỉnh sửa phát sinh trong lúc chờ ghi.** `savedContent` phải phản ánh snapshot đã gửi cho repository. Xem [báo cáo nợ kỹ thuật](../technical-debt.md#các-khoản-nợ-mở-ngày-2026-11-27).
+- ~~**P0 — Editor có thể đánh dấu đã lưu các chỉnh sửa phát sinh trong lúc chờ ghi**~~ (Đã xử lý — 2026-11-27: dùng snapshot và kiểm tra buffer khi tự đóng).
 - ~~**P0 — Nguy cơ mất dữ liệu với file non-UTF-8**~~ (Đã xử lý — 2026-11-26: `SFTPSession`, `S3Session`, và `LocalFileRepository` đều throw `AppError.invalidFileEncoding` khi file không phải UTF-8 hợp lệ).

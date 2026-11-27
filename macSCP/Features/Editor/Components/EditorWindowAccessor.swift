@@ -65,9 +65,9 @@ struct EditorWindowAccessor: NSViewRepresentable {
                 return true
             }
 
-            guard let viewModel = viewModel, viewModel.hasChanges else {
-                return true
-            }
+            guard let viewModel else { return true }
+            guard !viewModel.state.isLoading, sender.attachedSheet == nil else { return false }
+            guard viewModel.hasChanges else { return true }
 
             let alert = NSAlert()
             alert.messageText = "Do you want to save the changes made to the document “\(viewModel.fileName)”?"
@@ -89,8 +89,7 @@ struct EditorWindowAccessor: NSViewRepresentable {
                 switch response {
                 case .alertFirstButtonReturn: // Save
                     Task { @MainActor in
-                        await viewModel.save()
-                        if viewModel.error == nil {
+                        if await viewModel.save(), !viewModel.hasChanges {
                             self.isForceClosing = true
                             sender.close()
                         }

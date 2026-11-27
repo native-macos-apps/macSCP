@@ -93,6 +93,7 @@ Quản lý trạng thái giữa các cửa sổ được điều phối qua `Win
 ---
 
 ## 7. Known Gaps & Technical Debt
-- **P2 — CI chưa chạy unit tests trên pull request.** Workflow release chạy theo tag hoặc thủ công. Xem [báo cáo nợ kỹ thuật](../technical-debt.md#các-khoản-nợ-mở-ngày-2026-11-27).
+- ~~**P2 — CI chưa chạy unit tests trên pull request**~~ (Đã xử lý — 2026-11-27: workflow `unit-tests.yml` chạy `macSCPTests` trên pull request và push vào `main`).
+- **P2 — Chuyển toàn bộ target sang Swift 6.** Scanner đã được kiểm tra riêng trong Swift 6 language mode. Các cảnh báo actor isolation ở những thành phần khác vẫn cần xử lý trước khi đổi language mode của target.
 - ~~`DataStore.swift:38` đang dùng `fatalError` khi khởi tạo `ModelContainer` thất bại; `DataStore.preview` chưa dùng `isStoredInMemoryOnly: true`~~ (Đã xử lý — 2026-11-26: bổ sung in-memory fallback + cảnh báo người dùng tại `CommanderWorkspaceView` và `DataStore(inMemoryOnly: true)` cho preview).
 - ~~Nhiều ViewModel/Service còn gọi trực tiếp `.shared` thay vì nhận qua `DependencyContainer`~~ (Đã xử lý — 2026-11-26: mở rộng `DependencyContainer` và inject vào `FileBrowserViewModel`, `CommanderViewModel`, `SettingsView`).

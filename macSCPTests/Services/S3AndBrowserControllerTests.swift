@@ -6,11 +6,69 @@
 //  FileTransferManager, BatchTransferCoordinator transferType, and AppLockManager auth flows
 //
 
+import AWSS3
 import XCTest
 @testable import macSCP
 
 @MainActor
 final class S3AndBrowserControllerTests: XCTestCase {
+
+    func testS3DirectoryDeleteReportsItemAndMarkerErrorsAcrossPages() async throws {
+        do {
+            try await S3Session.deleteDirectoryObjects(
+                bucket: "bucket",
+                prefix: "folder/",
+                list: { input in
+                    XCTAssertEqual(input.bucket, "bucket")
+                    XCTAssertEqual(input.prefix, "folder/")
+                    if input.continuationToken == nil {
+                        return ListObjectsV2Output(
+                            contents: [.init(key: "folder/ok"), .init(key: "folder/denied")],
+                            isTruncated: true,
+                            nextContinuationToken: "next"
+                        )
+                    }
+                    XCTAssertEqual(input.continuationToken, "next")
+                    return ListObjectsV2Output(contents: [.init(key: "folder/")])
+                },
+                delete: { input in
+                    let keys = (input.delete?.objects ?? []).compactMap(\.key)
+                    if keys == ["folder/"] {
+                        return DeleteObjectsOutput(errors: [.init(code: "AccessDenied", key: "folder/")])
+                    }
+                    XCTAssertEqual(keys, ["folder/ok", "folder/denied"])
+                    return DeleteObjectsOutput(
+                        deleted: [.init(key: "folder/ok")],
+                        errors: [.init(code: "AccessDenied", key: "folder/denied")]
+                    )
+                }
+            )
+            XCTFail("Expected a partial delete error")
+        } catch AppError.s3OperationFailed(let details) {
+            XCTAssertTrue(details.contains("2 object(s)"))
+            XCTAssertTrue(details.contains("folder/denied: AccessDenied"))
+            XCTAssertTrue(details.contains("folder/: AccessDenied"))
+        }
+    }
+
+    func testS3MoveRejectsOverlapBeforeCopyingOrDeleting() async {
+        let session = S3Session()
+        for (source, destination) in [
+            ("/bucket/folder/", "/bucket/folder"),
+            ("/bucket/folder/", "/bucket/folder/child"),
+            ("/bucket/folder/child/", "/bucket/folder"),
+            ("/bucket/file", "/bucket/file")
+        ] {
+            do {
+                try await session.move(from: source, to: destination)
+                XCTFail("Expected overlap validation")
+            } catch AppError.s3OperationFailed(let reason) {
+                XCTAssertTrue(reason.contains("overlap") || reason.contains("same object"))
+            } catch {
+                XCTFail("Expected validation before connecting: \(error)")
+            }
+        }
+    }
 
     // MARK: - S3PathResolver Tests
 
