@@ -2,7 +2,7 @@
 id: SPEC-07
 title: Built-in File Editor
 status: active
-last_updated: 2026-11-26
+last_updated: 2026-11-27
 related_files:
   - MacSCP/Features/Editor/FileEditorWindow.swift
   - MacSCP/Features/Editor/FileEditorView.swift
@@ -86,4 +86,5 @@ Cho phép người dùng mở và chỉnh sửa trực tiếp các file văn b�
 ---
 
 ## 8. Known Gaps & Technical Debt
+- **P0 — Editor có thể đánh dấu đã lưu các chỉnh sửa phát sinh trong lúc chờ ghi.** `savedContent` phải phản ánh snapshot đã gửi cho repository. Xem [báo cáo nợ kỹ thuật](../technical-debt.md#các-khoản-nợ-mở-ngày-2026-11-27).
 - ~~**P0 — Nguy cơ mất dữ liệu với file non-UTF-8**~~ (Đã xử lý — 2026-11-26: `SFTPSession`, `S3Session`, và `LocalFileRepository` đều throw `AppError.invalidFileEncoding` khi file không phải UTF-8 hợp lệ).

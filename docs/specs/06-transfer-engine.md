@@ -2,7 +2,7 @@
 id: SPEC-06
 title: Transfer Engine & Batch Transfer Coordinator
 status: active
-last_updated: 2026-11-26
+last_updated: 2026-11-27
 related_files:
   - MacSCP/Services/TransferCoordinator/BatchTransferCoordinator.swift
   - MacSCP/Services/TransferCoordinator/RemoteDirectoryManager.swift
@@ -68,7 +68,7 @@ related_debt:
 | :--- | :--- |
 | Hủy batch trong lúc đang tạo thư mục | Dừng ngay, không chạy worker pool, trả về `BatchExecutionResult(isCancelled: true)`. |
 | Tạo thư mục cha thất bại | Ghi nhận lỗi vào tracker, không đẩy file con vào vòng lặp lỗi vô ích. |
-| Đã có batch đang chạy và người dùng kéo thêm batch mới | Cần có cơ chế hàng đợi hoặc thông báo rõ cho người dùng (hiện đang bỏ qua âm thầm — xem mục Known Gaps). |
+| Đã có batch đang chạy và người dùng kéo thêm batch mới | Báo đang có batch và yêu cầu người dùng chờ hoặc hủy batch trước. |
 | File có kích thước 0 byte | Vẫn tạo file thành công, không chia cho 0 khi tính `fractionCompleted`. |
 
 ---
@@ -88,6 +88,12 @@ related_debt:
 ---
 
 ## 8. Known Gaps & Technical Debt
+- **P0 — Ghi stream xuống đích local có thể làm mất file cũ khi ghi lỗi hoặc bị hủy.**
+- **P1 — Scanner có thể bỏ mục khi buffer đầy.** Hai caller lập batch từ các sự kiện nhận được và bỏ qua tổng số mục đã quét.
+- **P1 — Lỗi liệt kê thư mục remote bị bỏ qua.** Batch có thể tạo thư mục đích rỗng rồi hoàn tất dù thiếu file nguồn.
+- **P1 — Scanner local có thể làm phẳng cây thư mục.** So sánh tiền tố chuỗi thất bại khi Foundation liệt kê qua alias khác với đường dẫn đầu vào.
+- **P2 — Scanner local duyệt `DirectoryEnumerator` từ ngữ cảnh async.** Compiler cảnh báo đường này sẽ lỗi ở Swift 6 language mode.
+- Chi tiết và đề xuất xử lý nằm trong [báo cáo nợ kỹ thuật](../technical-debt.md#các-khoản-nợ-mở-ngày-2026-11-27).
 - ~~**P0 — `CancellationBox` data race**~~ (Đã xử lý — 2026-11-26: thay bằng `OSAllocatedUnfairLock` lưu `CancellationState`).
 - ~~**P1 — Trùng lặp Batch state & thiếu sequence guard**~~ (Đã xử lý — 2026-11-26: gom vào `FileTransferManager` với `lastAppliedSnapshotSequence` guard cho cả `FileBrowserViewModel` và `CommanderViewModel`).
 - ~~**P1 — Hardcode `transferType: .upload`**~~ (Đã xử lý — 2026-11-26: truyền tham số `transferType` qua `BatchTransferCoordinator.executeBatch`).

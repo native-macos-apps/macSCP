@@ -2,7 +2,7 @@
 id: SPEC-01
 title: Dual-Pane Commander Workspace
 status: active
-last_updated: 2026-11-26
+last_updated: 2026-11-27
 related_files:
   - MacSCP/Features/Commander/CommanderWorkspaceView.swift
   - MacSCP/Features/Commander/CommanderViewModel.swift
@@ -53,7 +53,7 @@ Không gian làm việc chính của MacSCP thiết kế theo mô hình **Dual-P
 - Nhấn vào biểu tượng transfer mở `CommanderTransfersPopover` để xem chi tiết active/recent transfers, hủy batch (`cancelBatch`), xóa lịch sử (`clearCompletedTransfers`) hoặc xóa từng mục (`removeTransfer`).
 
 ### Flow 4: Mở Terminal nhanh từ Commander
-- Cho phép mở macOS Terminal cho kết nối SFTP đang mở tại pane hoặc từ danh sách server trong `CommanderServersPaneView`.
+- Cho phép mở Integrated SSH Terminal cho kết nối SFTP đang mở tại pane hoặc từ danh sách server trong `CommanderServersPaneView`. Xem [SPEC-08](08-terminal-integration.md).
 
 ---
 
@@ -76,7 +76,7 @@ Không gian làm việc chính của MacSCP thiết kế theo mô hình **Dual-P
 | :--- | :--- |
 | Chuyển từ Remote sang Local/Servers hoặc sang Remote khác | Phải ngắt kết nối (`disconnect()`) **session cũ** trước khi giải phóng, không ngắt nhầm session mới. |
 | Kết nối SFTP chưa lưu mật khẩu | Lưu `pendingConnection` + `pendingPanePosition` và bật `PasswordPromptSheet`. |
-| Mở Terminal bị từ chối quyền Automation | Hiển thị lỗi `TerminalLauncherError.automationNotAuthorized` cho người dùng. |
+| Mở phiên Integrated SSH Terminal thất bại | Hiển thị lỗi kết nối trong cửa sổ Terminal. Xem [SPEC-08](08-terminal-integration.md). |
 
 ---
 
@@ -94,6 +94,7 @@ Không gian làm việc chính của MacSCP thiết kế theo mô hình **Dual-P
 ---
 
 ## 8. Known Gaps & Technical Debt
+- **P0/P1 — Độ toàn vẹn của cross-pane transfer.** Ghi vào đích local có thể để lại file dở dang. Khi quét nguồn, buffer đầy hoặc lỗi liệt kê có thể làm thiếu file trong batch. Xem [SPEC-06](06-transfer-engine.md#8-known-gaps--technical-debt).
 - ~~**P0 — Race condition & rò rỉ session:** `switchToLocal`, `switchToServers`, `completeConnect` trong `CommanderViewModel.swift`~~ (Đã xử lý — 2026-11-26).
 - ~~**P0 — `fatalError()` ở `NativeServersTableView.swift:197`**~~ (Đã xử lý — 2026-11-26).
 - ~~**P1 — Trùng lặp batch transfer state với `FileBrowserViewModel`**~~ (Đã xử lý — 2026-11-26: dùng chung `FileTransferManager` với `lastAppliedSnapshotSequence` guard và `transferType` chính xác).

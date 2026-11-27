@@ -2,7 +2,7 @@
 id: SPEC-05
 title: File Browser, Local Access, Quick Look & File Info
 status: active
-last_updated: 2026-11-26
+last_updated: 2026-11-27
 related_files:
   - MacSCP/Features/Browser/FileBrowserViewModel.swift
   - MacSCP/Features/Browser/FileBrowserView.swift
@@ -100,6 +100,8 @@ Cung cấp trình duyệt tập tin chuẩn Finder cho cả **Local**, **SFTP**,
 ---
 
 ## 8. Known Gaps & Technical Debt
+- **P0/P1 — Ghi file local có thể làm mất bản đích hiện có khi thất bại, và batch upload có thể bỏ mục khi scanner đầy buffer.** Xem [SPEC-06](06-transfer-engine.md#8-known-gaps--technical-debt).
+- **P1 — Batch upload có thể làm phẳng cây thư mục local.** Lỗi xảy ra khi đường dẫn gốc và đường dẫn do Foundation liệt kê đi qua hai alias khác nhau. Xem [SPEC-06](06-transfer-engine.md#8-known-gaps--technical-debt).
 - ~~**P1 — God Object & Leaky Abstraction:** `FileBrowserViewModel.swift` dài 1,355 dòng và phân nhánh trực tiếp theo `sftpSession`/`s3Session`/`isLocal`~~ (Đã xử lý — 2026-11-26: tách `BrowserSessionProtocol`, `BrowserQuickLookController`, và `FileTransferManager`).
 - ~~**P1 — Rò rỉ bộ nhớ & file tạm trong Quick Look**~~ (Đã xử lý — 2026-11-26: `BrowserQuickLookController` dùng `NSCache`, xóa cache khi `disconnect()`, không cache lỗi, và `defer` xóa file tạm).
 - ~~**P0 — `LocalFileStreamReader` data race**~~ (Đã xử lý — 2026-11-26: chuyển sang `actor`).

@@ -2,7 +2,7 @@
 id: SPEC-04
 title: Amazon S3 & S3-Compatible Storage
 status: active
-last_updated: 2026-11-26
+last_updated: 2026-11-27
 related_files:
   - MacSCP/Data/S3/S3Session.swift
   - MacSCP/Data/S3/S3SessionProtocol.swift
@@ -86,6 +86,7 @@ Cho phép người dùng duyệt và thao tác đối tượng trên **Amazon S3
 ---
 
 ## 8. Known Gaps & Technical Debt
+- **P1 — Xóa thư mục có thể báo thành công khi chỉ xóa được một phần.** `deleteDirectory` bỏ lỗi theo từng key trong `DeleteObjectsOutput`, ảnh hưởng cả đổi tên và di chuyển. Xem [báo cáo nợ kỹ thuật](../technical-debt.md#các-khoản-nợ-mở-ngày-2026-11-27).
 - ~~**P0 — Force unwrap & Data race:** Force unwrap `s3!` ở `S3Session.swift:64,67` và `S3StreamReader` là `@unchecked Sendable` không lock~~ (Đã xử lý — 2026-11-26: dùng biến local `client` và chuyển `S3StreamReader` sang `actor`).
 - ~~**P1 — God Object:** `S3Session.swift` dài 1,249 dòng~~ (Đã xử lý — 2026-11-26: tách `S3PathResolver`, `S3ErrorMapper`, và `S3Session+Transfers`).
 - ~~**P2 — Logging overhead:** `S3Session.log(_:)` tạo `Task { @MainActor ... }`~~ (Đã xử lý — 2026-11-26: gọi trực tiếp `logInfo(..., category: .s3)`).

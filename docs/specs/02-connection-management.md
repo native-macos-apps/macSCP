@@ -2,7 +2,7 @@
 id: SPEC-02
 title: Quản lý Kết nối & Thư mục (Connection & Folder Management)
 status: active
-last_updated: 2026-11-26
+last_updated: 2026-11-27
 related_files:
   - MacSCP/Domain/Models/Connection.swift
   - MacSCP/Domain/Models/Folder.swift
@@ -105,4 +105,5 @@ Cho phép người dùng tạo, lưu trữ, phân loại, tìm kiếm và kết 
 ---
 
 ## 8. Known Gaps & Technical Debt
+- **P1 — SwiftData và Keychain có thể lệch trạng thái.** Metadata được commit trước khi cập nhật credential. Lỗi xóa Keychain có thể bị bỏ qua. Xem [báo cáo nợ kỹ thuật](../technical-debt.md#các-khoản-nợ-mở-ngày-2026-11-27).
 - ~~`KeychainService.swift` đang trùng lặp boilerplate CRUD giữa Password và S3 Credentials~~ (Đã xử lý — 2026-11-26: gom vào `KeychainStore` dùng chung với `SSHKeyStorageService`).
